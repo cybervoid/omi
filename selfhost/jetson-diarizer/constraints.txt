@@ -1,0 +1,6 @@
+# Pin the Jetson base image's GPU-enabled torch stack so `pip install pyannote.audio`
+# cannot pull x86/CPU wheels over them. These are the versions baked into
+# dustynv/pytorch:2.7-r36.4.0.
+torch==2.7.0
+torchaudio==2.7.0
+torchvision==0.22.0
