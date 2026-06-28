@@ -23,6 +23,8 @@ from google.cloud import storage
 from google.oauth2 import service_account
 from google.cloud.exceptions import NotFound as BlobNotFound
 from google.cloud.exceptions import NotFound
+import google.auth
+import google.auth.transport.requests
 
 from database.redis_db import cache_signed_url, get_cached_signed_url
 from utils import encryption
@@ -1515,13 +1517,43 @@ def delete_speech_profile_blob(path: str) -> bool:
     return delete_blob(speech_profiles_bucket, path)
 
 
+_iam_sign_creds = None
+
+
+def _get_iam_signing_credentials():
+    """Refreshed ADC credentials for keyless (IAM SignBlob) V4 URL signing.
+
+    On GCE the attached service account is token-only (no private key), so URL
+    signing must go through the IAM SignBlob API. Requires
+    roles/iam.serviceAccountTokenCreator on the SA itself.
+    """
+    global _iam_sign_creds
+    if _iam_sign_creds is None:
+        _iam_sign_creds, _ = google.auth.default()
+    if not _iam_sign_creds.valid:
+        _iam_sign_creds.refresh(google.auth.transport.requests.Request())
+    return _iam_sign_creds
+
+
 def _get_signed_url(blob: Any, minutes: int) -> str:
     if cached := get_cached_signed_url(blob.name):
         return cached
 
-    signed_url: str = blob.generate_signed_url(
-        version="v4", expiration=datetime.timedelta(minutes=minutes), method="GET"
-    )
+    try:
+        signed_url: str = blob.generate_signed_url(
+            version="v4", expiration=datetime.timedelta(minutes=minutes), method="GET"
+        )
+    except AttributeError:
+        # Attached-SA (compute) credentials are token-only — no private key to sign
+        # with. Fall back to the IAM SignBlob API (needs serviceAccountTokenCreator).
+        creds = _get_iam_signing_credentials()
+        signed_url: str = blob.generate_signed_url(
+            version="v4",
+            expiration=datetime.timedelta(minutes=minutes),
+            method="GET",
+            service_account_email=creds.service_account_email,
+            access_token=creds.token,
+        )
     cache_signed_url(blob.name, signed_url, minutes * 60)
     return signed_url
 
