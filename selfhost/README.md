@@ -60,6 +60,40 @@ building locally:
 - Pin a specific build with `OMI_IMAGE=ghcr.io/cybervoid/omi-backend:sha-<commit>` in `.env`; omit for `:latest`.
 - **Hands-off CD:** a cron entry (`/etc/cron.d/omi-deploy`) runs `pull-deploy.sh` every 10 minutes and only recreates containers when the image digest actually changed.
 
+## Smoke test
+Run these after any deploy or upgrade; all should pass before calling a deploy good. Replace
+`<VM_HOST>` with your public endpoint, and run the VM checks from the deploy dir (private bundle).
+### Public API surface (from anywhere)
+```bash
+for p in /docs /openapi.json /v1/conversations /v1/conversations/count; do
+  printf '%s  %s\n' "$(curl -sk -o /dev/null -w '%{http_code}' "https://<VM_HOST>$p")" "$p"
+done
+```
+Expect `200` for `/docs` and `/openapi.json` (~350 routes), and `401` for the two `/v1/conversations*`
+paths (auth enforced). In zsh, **don't** name the loop variable `path` — it's bound to `$PATH` and
+will clobber it; use `p`.
+### Backend dependencies (on the VM)
+```bash
+cd ~/omi-deploy
+DC="docker compose -f docker-compose.ghcr.yml"
+$DC exec -T redis redis-cli ping                               # -> PONG
+DIARIZER_URL=$($DC exec -T backend printenv HOSTED_SPEAKER_EMBEDDING_API_URL | tr -d '\r')
+curl -s "$DIARIZER_URL/health"                                 # -> {"status":"healthy"}
+$DC logs pusher 2>&1 | grep "Application startup complete"     # pusher booted
+$DC exec -T backend python -m scripts.finalize_stale_conversations --dry-run   # Firestore + patch 0002
+$DC logs --since 10m backend 2>&1 | grep -iE "error|traceback" || echo "no errors"
+```
+Expect: Redis `PONG`; the diarizer `/health` healthy (Jetson reachable over Tailscale); the pusher
+startup line present; the finalizer printing `Sweep start … / Sweep done …` (proves Firestore
+connectivity and exercises patch 0002); and no errors in recent backend logs.
+### Latest run — 2026-06-29
+All checks **passed** on `ghcr.io/cybervoid/omi-backend:latest` (CI-built, auto-deployed):
+- Public: `/docs` 200, `/openapi.json` 200 (350 routes), `/v1/conversations` 401, `/v1/conversations/count` 401.
+- Redis `PONG`; pusher `Application startup complete`; backend logs clean (no errors/tracebacks in 10m).
+- Firestore reachable — finalizer dry-run: `Sweep start: users=1 …` → `Sweep done: scanned=0 finalized=0`.
+- Diarizer `/health` → `{"status":"healthy"}` over Tailscale.
+- Patches: **0002** finalizer verified via dry-run; **0001** SignBlob loads clean (audio playback validated separately).
+
 ## Maintenance
 ### Upgrade from upstream
 Rebase the self-host commits onto a newer upstream tag/commit, then push — CI rebuilds the image and
@@ -69,9 +103,9 @@ git fetch upstream
 git rebase upstream/main          # or a release tag; resolve any conflicts in the patch commits
 git push --force-with-lease origin selfhost
 ```
-After it deploys, re-verify: `/docs` returns `200`, audio playback works (the SignBlob path), the
-finalizer runs (`--dry-run`), and a speaker-embedding round-trip succeeds. Watch for new required env
-keys and new Firestore composite indexes.
+After it deploys, re-verify with the **Smoke test** section above (it covers the SignBlob audio path,
+the finalizer `--dry-run`, and the diarizer round-trip). Watch for new required env keys and new
+Firestore composite indexes.
 
 ### Jetson diarizer
 Independent of upstream (it only mirrors the `/v2/embedding` contract). See
