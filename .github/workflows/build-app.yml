@@ -1,0 +1,83 @@
+name: build-app
+
+# Builds a release-SIGNED dev APK for the self-hosted setup and uploads it as a workflow artifact.
+# Manual only (app builds are heavy). The signing keystore + your dev Firebase config are injected
+# from Actions secrets at build time — nothing sensitive is committed to this (public) repo.
+#
+# NOTE: on a public repo, workflow artifacts are broadly downloadable. The dev APK is low-risk
+# (Firebase key is package+SHA-restricted and the backend is auth-gated), but for true privacy the
+# delivery step can be moved to a private GCS bucket (via Workload Identity Federation) or the VM.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.35.3'
+          channel: stable
+          cache: true
+
+      - name: Install required Android NDK
+        run: yes | sdkmanager "ndk;28.2.13676358" >/dev/null 2>&1 || sdkmanager "ndk;28.2.13676358"
+
+      - name: Inject signing keystore + dev Firebase config (from secrets)
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          GOOGLE_SERVICES_JSON_DEV: ${{ secrets.GOOGLE_SERVICES_JSON_DEV }}
+          FIREBASE_OPTIONS_DEV: ${{ secrets.FIREBASE_OPTIONS_DEV }}
+          DEV_ENV: ${{ secrets.DEV_ENV }}
+        run: |
+          set -euo pipefail
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/omi-release.jks"
+          mkdir -p app/android/app/src/dev
+          echo "$GOOGLE_SERVICES_JSON_DEV" | base64 -d > app/android/app/src/dev/google-services.json
+          echo "$FIREBASE_OPTIONS_DEV" | base64 -d > app/lib/firebase_options_dev.dart
+          # dev flavor imports both; prod is a dev-stub so the dev build compiles
+          cp app/lib/firebase_options_dev.dart app/lib/firebase_options_prod.dart
+          echo "$DEV_ENV" | base64 -d > app/.dev.env
+
+      - name: Build signed dev APK
+        working-directory: app
+        env:
+          CM_KEYSTORE_PATH: ${{ runner.temp }}/omi-release.jks
+          CM_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          CM_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          CM_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          flutter --version
+          flutter pub get
+          dart run build_runner build --delete-conflicting-outputs
+          flutter gen-l10n || true
+          flutter build apk --flavor dev --release
+
+      - name: Verify APK signature
+        working-directory: app
+        run: |
+          set -euo pipefail
+          APK=build/app/outputs/flutter-apk/app-dev-release.apk
+          "$ANDROID_HOME"/build-tools/*/apksigner verify --print-certs "$APK" | grep -iE 'Signer|SHA-1|SHA-256' || true
+
+      - name: Upload signed APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: omi-dev-release-apk
+          path: app/build/app/outputs/flutter-apk/app-dev-release.apk
+          retention-days: 14
+          if-no-files-found: error
