@@ -133,7 +133,9 @@ android {
 
     buildTypes {
         release {
-            productFlavors.dev.signingConfig signingConfigs.debug
+            // Self-host: dev is distributed via our own pipeline, so it must be release-signed
+            // with a stable key (key.properties locally, or CM_* env vars in CI) to allow updates.
+            productFlavors.dev.signingConfig signingConfigs.release
             productFlavors.prod.signingConfig signingConfigs.release
             // fixing calendar
             // https://github.com/builttoroam/device_calendar/issues/99#issuecomment-612449677
