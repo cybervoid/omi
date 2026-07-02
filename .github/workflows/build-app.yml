@@ -33,8 +33,11 @@ jobs:
           channel: stable
           cache: true
 
+      - name: Set up Android SDK (cmdline-tools on PATH)
+        uses: android-actions/setup-android@v3
+
       - name: Install required Android NDK
-        run: yes | sdkmanager "ndk;28.2.13676358" >/dev/null 2>&1 || sdkmanager "ndk;28.2.13676358"
+        run: sdkmanager "ndk;28.2.13676358"
 
       - name: Inject signing keystore + dev Firebase config (from secrets)
         env:
