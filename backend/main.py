@@ -52,6 +52,7 @@ from routers import (
     other,
     developer,
     updates,
+    app_update,
     calendar_meetings,
     google_calendar,
     calendar_onboarding,
@@ -180,6 +181,7 @@ app.include_router(other.router)
 
 app.include_router(firmware.router)
 app.include_router(updates.router)
+app.include_router(app_update.router)
 app.include_router(sync.router)
 
 app.include_router(apps.router)
