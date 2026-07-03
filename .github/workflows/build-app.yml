@@ -9,6 +9,11 @@ name: build-app
 # delivery step can be moved to a private GCS bucket (via Workload Identity Federation) or the VM.
 on:
   workflow_dispatch:
+  push:
+    branches: [selfhost]
+    paths:
+      - 'app/**'
+      - '.github/workflows/build-app.yml'
 
 permissions:
   contents: read
@@ -55,6 +60,21 @@ jobs:
           cp app/lib/firebase_options_dev.dart app/lib/firebase_options_prod.dart
           echo "$DEV_ENV" | base64 -d > app/.dev.env
 
+      - name: Derive version from pubspec
+        working-directory: app
+        run: |
+          set -euo pipefail
+          # pubspec `version:` is `<name>+<code>` (e.g. 1.0.538+900). Add the run
+          # number to the base code so every self-host build is strictly newer
+          # than the last, which is what the in-app updater compares.
+          VERSION_LINE="$(grep -E '^version:' pubspec.yaml | awk '{print $2}')"
+          VERSION_NAME="${VERSION_LINE%%+*}"
+          BASE_CODE="${VERSION_LINE##*+}"
+          VERSION_CODE="$((BASE_CODE + GITHUB_RUN_NUMBER))"
+          echo "VERSION_NAME=$VERSION_NAME" >> "$GITHUB_ENV"
+          echo "VERSION_CODE=$VERSION_CODE" >> "$GITHUB_ENV"
+          echo "Derived versionName=$VERSION_NAME versionCode=$VERSION_CODE"
+
       - name: Build signed dev APK
         working-directory: app
         env:
@@ -68,7 +88,7 @@ jobs:
           flutter pub get
           dart run build_runner build --delete-conflicting-outputs
           flutter gen-l10n || true
-          flutter build apk --flavor dev --release
+          flutter build apk --flavor dev --release --build-name="$VERSION_NAME" --build-number="$VERSION_CODE"
 
       - name: Verify APK signature
         working-directory: app
@@ -87,8 +107,8 @@ jobs:
           {
             "app": "Omi Dev",
             "package": "com.friend.ios.dev",
-            "versionName": "1.0.538",
-            "versionCode": 900,
+            "versionName": "$VERSION_NAME",
+            "versionCode": $VERSION_CODE,
             "sha256": "$SHA256",
             "sizeBytes": $SIZE,
             "apkUrl": "https://35.223.15.33.sslip.io/app/omi-dev-release.apk",
