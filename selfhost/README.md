@@ -47,6 +47,21 @@ Both workflows live in `.github/workflows/` on this branch.
 - **Trigger:** weekly (Mondays 09:00 UTC) + manual.
 - Compares this branch's base against `upstream/main`; if upstream is ahead, it opens (or reuses) a tracking **issue**. It deliberately does **not** auto-rebase — upgrades are manual so patch conflicts get human review.
 
+### `build-app.yml` — signed dev APK artifact
+- **Trigger:** manual `workflow_dispatch`.
+- Builds a release-signed `Omi Dev` APK (`com.friend.ios.dev`) using Actions secrets for the release keystore and dev Firebase config. The artifact contains `app-dev-release.apk` plus `latest.json` metadata.
+- The APK is signed with the self-host release key whose SHA-1 is registered on the Firebase dev Android app. Because the fork is public, treat the GitHub artifact as an intermediate build output, not the preferred distribution channel.
+
+### APK delivery — VM-hosted, basic-auth protected
+- Current delivery endpoint: `https://35.223.15.33.sslip.io/app/latest.json` and `/app/omi-dev-release.apk`.
+- Caddy serves `/app/*` from the private VM deploy dir `~/omi-deploy/app-updates/` and protects it with Basic Auth. Credentials live only in the private deploy bundle (`app-updates-basic-auth.txt`), not in this repo.
+- To publish a future app build artifact, run the private helper from the deploy bundle:
+```bash
+cd ~/Documents/omi/deploy
+./publish-app-update.sh <github-run-id>
+```
+- This helper downloads the `build-app` artifact and copies it to the VM over IAP; GitHub Actions does not receive VM SSH keys or inbound VM access.
+
 ## Deploy (pull-based)
 The VM **pulls** the prebuilt image, so GitHub Actions never connects inbound to the VM and SSH can
 stay locked down (e.g. IAP-only). On the VM, `backend`/`pusher` reference the GHCR image instead of
@@ -116,6 +131,8 @@ contract.
 Redeploy a known-good build by setting `OMI_IMAGE=…:sha-<commit>` and re-running `pull-deploy.sh`,
 or fall back to a local build with the bundle's `docker-compose.yml`.
 
-## Not in CI (on purpose)
-The **app / APK** build stays manual: it needs your Firebase config and signing keystore, which
-shouldn't live in CI secrets for a personal fork. Build and sideload locally per the private runbook.
+## App updates
+The app update pipeline is intentionally staged:
+- **Done:** release keystore, Firebase SHA registration, signed APK CI, and basic-auth VM delivery.
+- **Manual install today:** download/install the APK from the VM endpoint, or use `adb install -r` once the release-signed app is already installed.
+- **Future option:** add an in-app update checker that reads `/app/latest.json` and prompts to download/install the APK. Android still requires user approval for sideloaded APK installs.
