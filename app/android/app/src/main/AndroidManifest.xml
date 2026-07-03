@@ -39,6 +39,9 @@
         tools:node="remove" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
+    <!-- Self-host in-app updater: sideload a signed APK fetched from the backend feed -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+
 
     <!--    INSTABUG PERMISSIONS    -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
