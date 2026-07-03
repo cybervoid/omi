@@ -1,5 +1,9 @@
 {
     "@@locale": "pl",
+    "checkForUpdates": "Sprawdź aktualizacje",
+    "appUpToDate": "Masz najnowszą wersję.",
+    "updateAvailable": "Dostępna aktualizacja",
+    "updateAvailableDescription": "Wersja {version} jest dostępna.",
     "appTitle": "Omi",
     "conversationTab": "Rozmowa",
     "transcriptTab": "Transkrypcja",

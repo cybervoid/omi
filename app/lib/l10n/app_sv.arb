@@ -1,5 +1,9 @@
 {
     "@@locale": "sv",
+    "checkForUpdates": "Sök efter uppdateringar",
+    "appUpToDate": "Du har den senaste versionen.",
+    "updateAvailable": "Uppdatering tillgänglig",
+    "updateAvailableDescription": "Version {version} är tillgänglig.",
     "appTitle": "Omi",
     "conversationTab": "Konversation",
     "transcriptTab": "Transkription",

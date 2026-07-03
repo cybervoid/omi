@@ -1,5 +1,9 @@
 {
     "@@locale": "ja",
+    "checkForUpdates": "アップデートを確認",
+    "appUpToDate": "最新バージョンを使用しています。",
+    "updateAvailable": "アップデートが利用可能",
+    "updateAvailableDescription": "バージョン {version} が利用可能です。",
     "appTitle": "Omi",
     "conversationTab": "会話",
     "transcriptTab": "文字起こし",

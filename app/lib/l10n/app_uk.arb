@@ -1,5 +1,9 @@
 {
     "@@locale": "uk",
+    "checkForUpdates": "Перевірити оновлення",
+    "appUpToDate": "У вас найновіша версія.",
+    "updateAvailable": "Доступне оновлення",
+    "updateAvailableDescription": "Версія {version} доступна.",
     "appTitle": "Omi",
     "conversationTab": "Розмова",
     "transcriptTab": "Транскрипція",

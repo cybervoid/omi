@@ -1,5 +1,9 @@
 {
     "@@locale": "tl",
+    "checkForUpdates": "Tingnan ang mga update",
+    "appUpToDate": "Ikaw ay nasa pinakabagong bersyon.",
+    "updateAvailable": "May available na update",
+    "updateAvailableDescription": "Available na ang bersyon {version}.",
     "@@last_modified": "2024-12-26",
     "appTitle": "Omi",
     "@appTitle": {
