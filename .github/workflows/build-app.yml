@@ -1,8 +1,8 @@
 name: build-app
 
-# Builds a release-SIGNED dev APK for the self-hosted setup and uploads it as a workflow artifact.
-# Manual only (app builds are heavy). The signing keystore + your dev Firebase config are injected
-# from Actions secrets at build time — nothing sensitive is committed to this (public) repo.
+# Builds a release-SIGNED dev APK for the self-hosted setup and uploads it + latest.json as
+# workflow artifacts. Manual only (app builds are heavy). The signing keystore + your dev Firebase
+# config are injected from Actions secrets at build time — nothing sensitive is committed.
 #
 # NOTE: on a public repo, workflow artifacts are broadly downloadable. The dev APK is low-risk
 # (Firebase key is package+SHA-restricted and the backend is auth-gated), but for true privacy the
@@ -76,11 +76,35 @@ jobs:
           set -euo pipefail
           APK=build/app/outputs/flutter-apk/app-dev-release.apk
           "$ANDROID_HOME"/build-tools/*/apksigner verify --print-certs "$APK" | grep -iE 'Signer|SHA-1|SHA-256' || true
+      - name: Generate update metadata
+        working-directory: app
+        run: |
+          set -euo pipefail
+          APK=build/app/outputs/flutter-apk/app-dev-release.apk
+          SHA256="$(sha256sum "$APK" | awk '{print $1}')"
+          SIZE="$(stat -c%s "$APK")"
+          cat > build/app/outputs/flutter-apk/latest.json <<EOF
+          {
+            "app": "Omi Dev",
+            "package": "com.friend.ios.dev",
+            "versionName": "1.0.538",
+            "versionCode": 900,
+            "sha256": "$SHA256",
+            "sizeBytes": $SIZE,
+            "apkUrl": "https://35.223.15.33.sslip.io/app/omi-dev-release.apk",
+            "generatedAt": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "source": "${GITHUB_REPOSITORY} build-app run ${GITHUB_RUN_ID}",
+            "commit": "${GITHUB_SHA}"
+          }
+          EOF
+          cat build/app/outputs/flutter-apk/latest.json
 
       - name: Upload signed APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: omi-dev-release-apk
-          path: app/build/app/outputs/flutter-apk/app-dev-release.apk
+          path: |
+            app/build/app/outputs/flutter-apk/app-dev-release.apk
+            app/build/app/outputs/flutter-apk/latest.json
           retention-days: 14
           if-no-files-found: error
