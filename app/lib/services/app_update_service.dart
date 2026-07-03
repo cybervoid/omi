@@ -160,6 +160,9 @@ class AppUpdateService {
     }
 
     final dir = await getTemporaryDirectory();
+    // The cache directory may not exist yet on a fresh install; create it
+    // before opening the target file for write.
+    await dir.create(recursive: true);
     final file = File(p.join(dir.path, 'omi-dev-update-${info.versionCode}.apk'));
     if (await file.exists()) await file.delete();
 
