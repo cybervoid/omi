@@ -11,9 +11,10 @@ changes as commits on top of a pinned upstream baseline.
 > `RUNBOOK.md` holds the specifics.
 
 ## What's on this branch (vs. upstream)
-- **`backend/`** — the upstream backend plus two self-host patches:
+- **`backend/`** — the upstream backend plus three self-host patches:
   - GCS V4 signed URLs via IAM **SignBlob**, so audio playback works on a **keyless** GCE VM (attached service account, no exported JSON key).
   - A **stale-conversation finalizer** (`backend/scripts/finalize_stale_conversations.py`), run from cron to close conversations stuck in `in_progress`.
+  - An **app-update feed** (`backend/routers/app_update.py`): auth-gated `GET /v2/app/android/latest` + `/v2/app/android/download` that serve the self-host APK + metadata to the in-app updater (no embedded secrets).
 - **`selfhost/jetson-diarizer/`** — an aarch64 speaker-embedding service for a Jetson that replaces Omi's hosted `diarizer`. See [`jetson-diarizer/README.md`](jetson-diarizer/README.md).
 - **`.github/workflows/`** — CI that builds the backend image and watches upstream (below).
 
@@ -48,13 +49,13 @@ Both workflows live in `.github/workflows/` on this branch.
 - Compares this branch's base against `upstream/main`; if upstream is ahead, it opens (or reuses) a tracking **issue**. It deliberately does **not** auto-rebase — upgrades are manual so patch conflicts get human review.
 
 ### `build-app.yml` — signed dev APK artifact
-- **Trigger:** manual `workflow_dispatch`.
-- Builds a release-signed `Omi Dev` APK (`com.friend.ios.dev`) using Actions secrets for the release keystore and dev Firebase config. The artifact contains `app-dev-release.apk` plus `latest.json` metadata.
+- **Trigger:** push to `selfhost` touching `app/**` (or the workflow), or manual `workflow_dispatch`.
+- Builds a release-signed `Omi Dev` APK (`com.friend.ios.dev`) using Actions secrets for the release keystore and dev Firebase config. The artifact contains `app-dev-release.apk` plus `latest.json` metadata. `versionName`/`versionCode` are derived from `app/pubspec.yaml` (build number + run number), so `latest.json` increments each run and the in-app updater can detect new builds.
 - The APK is signed with the self-host release key whose SHA-1 is registered on the Firebase dev Android app. Because the fork is public, treat the GitHub artifact as an intermediate build output, not the preferred distribution channel.
 
-### APK delivery — VM-hosted, basic-auth protected
-- Current delivery endpoint: `https://35.223.15.33.sslip.io/app/latest.json` and `/app/omi-dev-release.apk`.
-- Caddy serves `/app/*` from the private VM deploy dir `~/omi-deploy/app-updates/` and protects it with Basic Auth. Credentials live only in the private deploy bundle (`app-updates-basic-auth.txt`), not in this repo.
+### APK delivery — backend feed (app) + basic-auth browser fallback
+- **In-app (preferred):** the backend serves an auth-gated feed — `GET /v2/app/android/latest` (metadata) and `/v2/app/android/download` (APK), both requiring the app's Firebase ID token. **Settings → About → Check for updates** uses this feed, so no credential is embedded in the app. Endpoints are backed by the VM `app-updates/` dir mounted read-only into the backend (`APP_UPDATES_DIR`).
+- **Browser fallback:** Caddy also serves `/app/*` from `~/omi-deploy/app-updates/` behind Basic Auth (`https://35.223.15.33.sslip.io/app/latest.json` and `/app/omi-dev-release.apk`). Credentials live only in the private deploy bundle (`app-updates-basic-auth.txt`), not in this repo.
 - To publish a future app build artifact, run the private helper from the deploy bundle:
 ```bash
 cd ~/Documents/omi/deploy
@@ -132,7 +133,8 @@ Redeploy a known-good build by setting `OMI_IMAGE=…:sha-<commit>` and re-runni
 or fall back to a local build with the bundle's `docker-compose.yml`.
 
 ## App updates
-The app update pipeline is intentionally staged:
-- **Done:** release keystore, Firebase SHA registration, signed APK CI, and basic-auth VM delivery.
-- **Manual install today:** download/install the APK from the VM endpoint, or use `adb install -r` once the release-signed app is already installed.
-- **Future option:** add an in-app update checker that reads `/app/latest.json` and prompts to download/install the APK. Android still requires user approval for sideloaded APK installs.
+The app update pipeline now closes the loop end-to-end:
+- **CI:** pushing app changes to `selfhost` auto-builds a signed dev APK with a dynamically derived `versionCode` (`build-app.yml`).
+- **Delivery:** the APK + `latest.json` are published to the VM (admin-run `publish-app-update.sh` over IAP) and served through the auth-gated backend feed; the Basic Auth `/app/*` path is kept as a browser fallback.
+- **In-app:** Settings → About → **Check for updates** compares the running `versionCode` to the feed, downloads + SHA-256-verifies the APK, and launches Android's installer via `open_filex` (user still approves the sideload).
+- **Deferred:** a passive launch-time nudge and a VM-pull cron for hands-off delivery; publishing stays admin-run to preserve the IAP SSH lockdown.
