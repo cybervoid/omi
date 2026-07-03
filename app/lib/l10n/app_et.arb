@@ -1,5 +1,9 @@
 {
     "@@locale": "et",
+    "checkForUpdates": "Otsi värskendusi",
+    "appUpToDate": "Kasutad uusimat versiooni.",
+    "updateAvailable": "Värskendus on saadaval",
+    "updateAvailableDescription": "Versioon {version} on saadaval.",
     "appTitle": "Omi",
     "conversationTab": "Vestlus",
     "transcriptTab": "Transkriptsioon",

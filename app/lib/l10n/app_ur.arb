@@ -1,5 +1,9 @@
 {
     "@@locale": "ur",
+    "checkForUpdates": "اپ ڈیٹس چیک کریں",
+    "appUpToDate": "آپ تازہ ترین ورژن استعمال کر رہے ہیں۔",
+    "updateAvailable": "اپ ڈیٹ دستیاب ہے",
+    "updateAvailableDescription": "ورژن {version} دستیاب ہے۔",
     "@@last_modified": "2024-12-26",
     "appTitle": "Omi",
     "@appTitle": {

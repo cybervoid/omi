@@ -1,5 +1,9 @@
 {
     "@@locale": "el",
+    "checkForUpdates": "Έλεγχος για ενημερώσεις",
+    "appUpToDate": "Έχετε την πιο πρόσφατη έκδοση.",
+    "updateAvailable": "Διαθέσιμη ενημέρωση",
+    "updateAvailableDescription": "Η έκδοση {version} είναι διαθέσιμη.",
     "appTitle": "Omi",
     "conversationTab": "Συνομιλία",
     "transcriptTab": "Απομαγνητοφώνηση",

@@ -1,5 +1,9 @@
 {
     "@@locale": "he",
+    "checkForUpdates": "בדיקת עדכונים",
+    "appUpToDate": "אתה משתמש בגרסה האחרונה.",
+    "updateAvailable": "עדכון זמין",
+    "updateAvailableDescription": "גרסה {version} זמינה.",
     "@@last_modified": "2024-12-26",
     "appTitle": "Omi",
     "@appTitle": {

@@ -1,5 +1,9 @@
 {
     "@@locale": "zh",
+    "checkForUpdates": "检查更新",
+    "appUpToDate": "您已是最新版本。",
+    "updateAvailable": "有可用更新",
+    "updateAvailableDescription": "版本 {version} 已可用。",
     "appTitle": "Omi",
     "conversationTab": "对话",
     "transcriptTab": "转录",

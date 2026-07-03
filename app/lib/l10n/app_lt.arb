@@ -1,5 +1,9 @@
 {
     "@@locale": "lt",
+    "checkForUpdates": "Tikrinti atnaujinimus",
+    "appUpToDate": "Naudojate naujausią versiją.",
+    "updateAvailable": "Yra atnaujinimas",
+    "updateAvailableDescription": "Versija {version} jau prieinama.",
     "@captureRecordingError": {
         "placeholders": {
             "error": {

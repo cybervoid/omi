@@ -1,5 +1,9 @@
 {
     "@@locale": "ms",
+    "checkForUpdates": "Semak kemas kini",
+    "appUpToDate": "Anda menggunakan versi terkini.",
+    "updateAvailable": "Kemas kini tersedia",
+    "updateAvailableDescription": "Versi {version} tersedia.",
     "appTitle": "Omi",
     "conversationTab": "Perbualan",
     "transcriptTab": "Transkrip",

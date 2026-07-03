@@ -1,5 +1,9 @@
 {
     "@@locale": "id",
+    "checkForUpdates": "Periksa pembaruan",
+    "appUpToDate": "Anda menggunakan versi terbaru.",
+    "updateAvailable": "Pembaruan tersedia",
+    "updateAvailableDescription": "Versi {version} tersedia.",
     "appTitle": "Omi",
     "conversationTab": "Percakapan",
     "transcriptTab": "Transkrip",

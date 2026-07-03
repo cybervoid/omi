@@ -1,5 +1,9 @@
 {
     "@@locale": "bn",
+    "checkForUpdates": "আপডেট পরীক্ষা করুন",
+    "appUpToDate": "আপনি সর্বশেষ সংস্করণে আছেন।",
+    "updateAvailable": "আপডেট উপলব্ধ",
+    "updateAvailableDescription": "সংস্করণ {version} উপলব্ধ।",
     "@@last_modified": "2024-12-26",
     "appTitle": "Omi",
     "@appTitle": {

@@ -1,5 +1,9 @@
 {
     "@@locale": "ro",
+    "checkForUpdates": "Verifică actualizările",
+    "appUpToDate": "Ai cea mai recentă versiune.",
+    "updateAvailable": "Actualizare disponibilă",
+    "updateAvailableDescription": "Versiunea {version} este disponibilă.",
     "appTitle": "Omi",
     "conversationTab": "Conversație",
     "transcriptTab": "Transcriere",
