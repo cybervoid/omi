@@ -1,5 +1,9 @@
 {
     "@@locale": "tr",
+    "checkForUpdates": "Güncellemeleri denetle",
+    "appUpToDate": "En son sürümü kullanıyorsunuz.",
+    "updateAvailable": "Güncelleme mevcut",
+    "updateAvailableDescription": "{version} sürümü mevcut.",
     "appTitle": "Omi",
     "conversationTab": "Konuşma",
     "transcriptTab": "Transkript",

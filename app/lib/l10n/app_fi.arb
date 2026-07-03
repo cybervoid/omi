@@ -1,5 +1,9 @@
 {
     "@@locale": "fi",
+    "checkForUpdates": "Tarkista päivitykset",
+    "appUpToDate": "Sinulla on uusin versio.",
+    "updateAvailable": "Päivitys saatavilla",
+    "updateAvailableDescription": "Versio {version} on saatavilla.",
     "appTitle": "Omi",
     "conversationTab": "Keskustelu",
     "transcriptTab": "Litterointi",

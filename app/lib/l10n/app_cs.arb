@@ -1,5 +1,9 @@
 {
     "@@locale": "cs",
+    "checkForUpdates": "Zkontrolovat aktualizace",
+    "appUpToDate": "Máte nejnovější verzi.",
+    "updateAvailable": "Dostupná aktualizace",
+    "updateAvailableDescription": "Verze {version} je dostupná.",
     "appTitle": "Omi",
     "conversationTab": "Konverzace",
     "transcriptTab": "Přepis",
