@@ -1,6 +1,10 @@
 {
     "@@locale": "hu",
     "sessionExpiredSignInAgain": "A munkamenet lejárt — jelentkezz be újra.",
+    "checkForUpdates": "Frissítések keresése",
+    "appUpToDate": "A legújabb verziót használod.",
+    "updateAvailable": "Elérhető frissítés",
+    "updateAvailableDescription": "A(z) {version} verzió elérhető.",
     "appTitle": "Omi",
     "conversationTab": "Beszélgetés",
     "transcriptTab": "Átirat",

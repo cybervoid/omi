@@ -1,6 +1,10 @@
 {
     "@@locale": "be",
     "sessionExpiredSignInAgain": "Сеанс скончыўся — увайдзіце зноў.",
+    "checkForUpdates": "Праверыць абнаўленні",
+    "appUpToDate": "У вас апошняя версія.",
+    "updateAvailable": "Даступна абнаўленне",
+    "updateAvailableDescription": "Версія {version} даступная.",
     "@@last_modified": "2024-12-26",
     "appTitle": "Omi",
     "@appTitle": {

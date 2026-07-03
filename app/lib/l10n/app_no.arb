@@ -1,6 +1,10 @@
 {
     "@@locale": "no",
     "sessionExpiredSignInAgain": "Økten er utløpt — logg på igjen.",
+    "checkForUpdates": "Se etter oppdateringer",
+    "appUpToDate": "Du har den nyeste versjonen.",
+    "updateAvailable": "Oppdatering tilgjengelig",
+    "updateAvailableDescription": "Versjon {version} er tilgjengelig.",
     "appTitle": "Omi",
     "conversationTab": "Samtale",
     "transcriptTab": "Transkripsjon",

@@ -1,6 +1,10 @@
 {
     "@@locale": "kn",
     "sessionExpiredSignInAgain": "ಸೆಷನ್ ಅವಧಿ ಮುಗಿದಿದೆ — ಮತ್ತೆ ಸೈನ್ ಇನ್ ಮಾಡಿ.",
+    "checkForUpdates": "ನವೀಕರಣಗಳನ್ನು ಪರಿಶೀಲಿಸಿ",
+    "appUpToDate": "ನೀವು ಇತ್ತೀಚಿನ ಆವೃತ್ತಿಯಲ್ಲಿದ್ದೀರಿ.",
+    "updateAvailable": "ನವೀಕರಣ ಲಭ್ಯವಿದೆ",
+    "updateAvailableDescription": "ಆವೃತ್ತಿ {version} ಲಭ್ಯವಿದೆ.",
     "@@last_modified": "2024-12-26",
     "appTitle": "ಓಮಿ",
     "@appTitle": {

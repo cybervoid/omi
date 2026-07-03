@@ -1,6 +1,10 @@
 {
     "@@locale": "sl",
     "sessionExpiredSignInAgain": "Seja je potekla — znova se prijavite.",
+    "checkForUpdates": "Preveri posodobitve",
+    "appUpToDate": "Uporabljate najnovejšo različico.",
+    "updateAvailable": "Na voljo je posodobitev",
+    "updateAvailableDescription": "Različica {version} je na voljo.",
     "@@last_modified": "2024-12-26",
     "appTitle": "Omi",
     "@appTitle": {

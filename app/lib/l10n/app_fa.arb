@@ -1,6 +1,10 @@
 {
     "@@locale": "fa",
     "sessionExpiredSignInAgain": "جلسه منقضی شد — دوباره وارد شوید.",
+    "checkForUpdates": "بررسی به‌روزرسانی‌ها",
+    "appUpToDate": "شما از آخرین نسخه استفاده می‌کنید.",
+    "updateAvailable": "به‌روزرسانی در دسترس است",
+    "updateAvailableDescription": "نسخه {version} در دسترس است.",
     "@@last_modified": "2024-12-26",
     "appTitle": "Omi",
     "@appTitle": {

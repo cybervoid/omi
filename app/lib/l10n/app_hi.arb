@@ -1,6 +1,10 @@
 {
     "@@locale": "hi",
     "sessionExpiredSignInAgain": "सत्र की समय-सीमा समाप्त हो गई — फिर से साइन इन करें।",
+    "checkForUpdates": "अपडेट जांचें",
+    "appUpToDate": "आप नवीनतम संस्करण पर हैं।",
+    "updateAvailable": "अपडेट उपलब्ध है",
+    "updateAvailableDescription": "संस्करण {version} उपलब्ध है।",
     "appTitle": "ओमी",
     "conversationTab": "बातचीत",
     "transcriptTab": "प्रतिलेख",

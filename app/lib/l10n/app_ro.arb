@@ -1,6 +1,10 @@
 {
     "@@locale": "ro",
     "sessionExpiredSignInAgain": "Sesiunea a expirat — autentifică-te din nou.",
+    "checkForUpdates": "Verifică actualizările",
+    "appUpToDate": "Ai cea mai recentă versiune.",
+    "updateAvailable": "Actualizare disponibilă",
+    "updateAvailableDescription": "Versiunea {version} este disponibilă.",
     "appTitle": "Omi",
     "conversationTab": "Conversație",
     "transcriptTab": "Transcriere",

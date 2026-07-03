@@ -1,6 +1,10 @@
 {
     "@@locale": "th",
     "sessionExpiredSignInAgain": "เซสชันหมดอายุ — ลงชื่อเข้าใช้อีกครั้ง",
+    "checkForUpdates": "ตรวจหาการอัปเดต",
+    "appUpToDate": "คุณใช้เวอร์ชันล่าสุดแล้ว",
+    "updateAvailable": "มีการอัปเดต",
+    "updateAvailableDescription": "เวอร์ชัน {version} พร้อมใช้งานแล้ว",
     "appTitle": "Omi",
     "conversationTab": "บทสนทนา",
     "transcriptTab": "บันทึกเสียง",

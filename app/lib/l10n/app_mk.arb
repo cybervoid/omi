@@ -1,6 +1,10 @@
 {
     "@@locale": "mk",
     "sessionExpiredSignInAgain": "Сесијата истече — најавете се повторно.",
+    "checkForUpdates": "Провери за ажурирања",
+    "appUpToDate": "Ја користите најновата верзија.",
+    "updateAvailable": "Достапно е ажурирање",
+    "updateAvailableDescription": "Верзијата {version} е достапна.",
     "@@last_modified": "2024-12-26",
     "appTitle": "Omi",
     "@appTitle": {

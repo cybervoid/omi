@@ -1,6 +1,10 @@
 {
     "@@locale": "ar",
     "sessionExpiredSignInAgain": "انتهت صلاحية الجلسة — سجّل الدخول مرة أخرى.",
+    "checkForUpdates": "التحقق من التحديثات",
+    "appUpToDate": "أنت تستخدم أحدث إصدار.",
+    "updateAvailable": "يتوفر تحديث",
+    "updateAvailableDescription": "الإصدار {version} متوفر الآن.",
     "appTitle": "Omi",
     "conversationTab": "المحادثة",
     "transcriptTab": "النص المكتوب",

@@ -1,6 +1,10 @@
 {
     "@@locale": "lt",
     "sessionExpiredSignInAgain": "Seanso laikas baigėsi — prisijunkite dar kartą.",
+    "checkForUpdates": "Tikrinti atnaujinimus",
+    "appUpToDate": "Naudojate naujausią versiją.",
+    "updateAvailable": "Yra atnaujinimas",
+    "updateAvailableDescription": "Versija {version} jau prieinama.",
     "@captureRecordingError": {
         "placeholders": {
             "error": {

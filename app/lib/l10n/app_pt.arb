@@ -1,6 +1,10 @@
 {
     "@@locale": "pt",
     "sessionExpiredSignInAgain": "A sessão expirou — inicie sessão novamente.",
+    "checkForUpdates": "Verificar atualizações",
+    "appUpToDate": "Você está na versão mais recente.",
+    "updateAvailable": "Atualização disponível",
+    "updateAvailableDescription": "A versão {version} está disponível.",
     "appTitle": "Omi",
     "conversationTab": "Conversa",
     "transcriptTab": "Transcrição",

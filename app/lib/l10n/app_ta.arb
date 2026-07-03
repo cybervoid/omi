@@ -1,6 +1,10 @@
 {
     "@@locale": "ta",
     "sessionExpiredSignInAgain": "அமர்வு காலாவதியானது — மீண்டும் உள்நுழையவும்.",
+    "checkForUpdates": "புதுப்பிப்புகளைச் சரிபார்க்கவும்",
+    "appUpToDate": "நீங்கள் சமீபத்திய பதிப்பைப் பயன்படுத்துகிறீர்கள்.",
+    "updateAvailable": "புதுப்பிப்பு கிடைக்கிறது",
+    "updateAvailableDescription": "பதிப்பு {version} கிடைக்கிறது.",
     "@@last_modified": "2024-12-26",
     "appTitle": "Omi",
     "@appTitle": {

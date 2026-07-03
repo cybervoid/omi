@@ -1,6 +1,10 @@
 {
     "@@locale": "vi",
     "sessionExpiredSignInAgain": "Phiên đã hết hạn — hãy đăng nhập lại.",
+    "checkForUpdates": "Kiểm tra cập nhật",
+    "appUpToDate": "Bạn đang dùng phiên bản mới nhất.",
+    "updateAvailable": "Đã có bản cập nhật",
+    "updateAvailableDescription": "Phiên bản {version} đã có sẵn.",
     "appTitle": "Omi",
     "conversationTab": "Cuộc trò chuyện",
     "transcriptTab": "Bản ghi",

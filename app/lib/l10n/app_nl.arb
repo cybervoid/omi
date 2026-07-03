@@ -1,6 +1,10 @@
 {
     "@@locale": "nl",
     "sessionExpiredSignInAgain": "De sessie is verlopen — log opnieuw in.",
+    "checkForUpdates": "Controleer op updates",
+    "appUpToDate": "Je hebt de nieuwste versie.",
+    "updateAvailable": "Update beschikbaar",
+    "updateAvailableDescription": "Versie {version} is beschikbaar.",
     "appTitle": "Omi",
     "conversationTab": "Gesprek",
     "transcriptTab": "Transcriptie",

@@ -1,6 +1,10 @@
 {
     "@@locale": "mr",
     "sessionExpiredSignInAgain": "सत्राची मुदत संपली — पुन्हा साइन इन करा.",
+    "checkForUpdates": "अद्यतने तपासा",
+    "appUpToDate": "तुम्ही नवीनतम आवृत्ती वापरत आहात.",
+    "updateAvailable": "अद्यतन उपलब्ध आहे",
+    "updateAvailableDescription": "आवृत्ती {version} उपलब्ध आहे.",
     "@@last_modified": "2024-12-26",
     "appTitle": "Omi",
     "@appTitle": {

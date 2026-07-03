@@ -1,6 +1,10 @@
 {
     "@@locale": "lv",
     "sessionExpiredSignInAgain": "Sesija ir beigusies — pierakstieties vēlreiz.",
+    "checkForUpdates": "Pārbaudīt atjauninājumus",
+    "appUpToDate": "Jums ir jaunākā versija.",
+    "updateAvailable": "Pieejams atjauninājums",
+    "updateAvailableDescription": "Versija {version} ir pieejama.",
     "appTitle": "Omi",
     "conversationTab": "Saruna",
     "transcriptTab": "Transkripcija",

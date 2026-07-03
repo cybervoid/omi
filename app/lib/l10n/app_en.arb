@@ -53,6 +53,28 @@
     "@update": {
         "description": "Button label to update action item"
     },
+    "checkForUpdates": "Check for updates",
+    "@checkForUpdates": {
+        "description": "Settings About tile to manually check for an app update (self-host)"
+    },
+    "appUpToDate": "You're on the latest version.",
+    "@appUpToDate": {
+        "description": "Message shown when no app update is available"
+    },
+    "updateAvailable": "Update available",
+    "@updateAvailable": {
+        "description": "Title shown when an app update is available"
+    },
+    "updateAvailableDescription": "Version {version} is available.",
+    "@updateAvailableDescription": {
+        "description": "Body shown when an app update is available",
+        "placeholders": {
+            "version": {
+                "type": "String",
+                "example": "1.0.539"
+            }
+        }
+    },
     "save": "Save",
     "@save": {
         "description": "Save button label"

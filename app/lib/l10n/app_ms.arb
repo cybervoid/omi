@@ -1,6 +1,10 @@
 {
     "@@locale": "ms",
     "sessionExpiredSignInAgain": "Sesi tamat tempoh — log masuk semula.",
+    "checkForUpdates": "Semak kemas kini",
+    "appUpToDate": "Anda menggunakan versi terkini.",
+    "updateAvailable": "Kemas kini tersedia",
+    "updateAvailableDescription": "Versi {version} tersedia.",
     "appTitle": "Omi",
     "conversationTab": "Perbualan",
     "transcriptTab": "Transkrip",

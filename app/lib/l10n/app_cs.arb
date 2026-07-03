@@ -1,6 +1,10 @@
 {
     "@@locale": "cs",
     "sessionExpiredSignInAgain": "Platnost relace vypršela — přihlaste se znovu.",
+    "checkForUpdates": "Zkontrolovat aktualizace",
+    "appUpToDate": "Máte nejnovější verzi.",
+    "updateAvailable": "Dostupná aktualizace",
+    "updateAvailableDescription": "Verze {version} je dostupná.",
     "appTitle": "Omi",
     "conversationTab": "Konverzace",
     "transcriptTab": "Přepis",

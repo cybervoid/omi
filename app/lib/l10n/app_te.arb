@@ -1,6 +1,10 @@
 {
     "@@locale": "te",
     "sessionExpiredSignInAgain": "సెషన్ గడువు ముగిసింది — మళ్లీ సైన్ ఇన్ చేయండి.",
+    "checkForUpdates": "నవీకరణల కోసం తనిఖీ చేయండి",
+    "appUpToDate": "మీరు తాజా వెర్షన్‌ను ఉపయోగిస్తున్నారు.",
+    "updateAvailable": "నవీకరణ అందుబాటులో ఉంది",
+    "updateAvailableDescription": "వెర్షన్ {version} అందుబాటులో ఉంది.",
     "@@last_modified": "2024-12-26",
     "appTitle": "Omi",
     "@appTitle": {
