@@ -10,6 +10,7 @@ import 'package:omi/services/auth_service.dart';
 import 'package:omi/pages/settings/developer.dart';
 import 'package:omi/pages/settings/notifications_settings_page.dart';
 import 'package:omi/pages/settings/permissions_page.dart';
+import 'package:omi/pages/settings/about.dart';
 import 'package:omi/pages/settings/profile.dart';
 import 'package:omi/pages/memories/page.dart';
 import 'package:omi/pages/settings/integrations_page.dart';
@@ -303,6 +304,7 @@ class _SettingsDrawerState extends State<SettingsDrawer> {
 
     void goToMemories() => routeToPage(context, const MemoriesPage());
     void goToDeveloper() async => await routeToPage(context, const DeveloperSettingsPage());
+    void goToAbout() => routeToPage(context, const AboutOmiPage());
 
     final profileIcon = FaIcon(FontAwesomeIcons.solidUser, color: Color(0xFF8E8E93), size: 20);
     final notifIcon = FaIcon(FontAwesomeIcons.solidBell, color: Color(0xFF8E8E93), size: 20);
@@ -313,6 +315,7 @@ class _SettingsDrawerState extends State<SettingsDrawer> {
     final devIcon = FaIcon(FontAwesomeIcons.code, color: Color(0xFF8E8E93), size: 20);
     final intIcon = FaIcon(FontAwesomeIcons.networkWired, color: Color(0xFF8E8E93), size: 20);
     final syncIcon = FaIcon(FontAwesomeIcons.solidCloud, color: Color(0xFF8E8E93), size: 20);
+    final aboutIcon = FaIcon(FontAwesomeIcons.circleInfo, color: Color(0xFF8E8E93), size: 20);
 
     final items = <_SearchableItem>[
       // --- Profile ---
@@ -404,6 +407,9 @@ class _SettingsDrawerState extends State<SettingsDrawer> {
           ChangelogSheet.showWithLoading(context, () => getAppChangelogs(limit: 5));
         },
       ),
+      // --- About / updates ---
+      _SearchableItem(title: context.l10n.aboutOmi, icon: aboutIcon, onTap: goToAbout),
+      _SearchableItem(title: context.l10n.checkForUpdates, icon: aboutIcon, onTap: goToAbout),
       // --- Mac app ---
       _SearchableItem(
         title: context.l10n.getOmiForMac,
@@ -659,6 +665,14 @@ class _SettingsDrawerState extends State<SettingsDrawer> {
                   onTap: () {
                     PlatformManager.instance.analytics.whatsNewOpened();
                     ChangelogSheet.showWithLoading(context, () => getAppChangelogs(limit: 5));
+                  },
+                ),
+                const Divider(height: 1, color: Color(0xFF3C3C43)),
+                _buildSettingsItem(
+                  title: context.l10n.aboutOmi,
+                  icon: const FaIcon(FontAwesomeIcons.circleInfo, color: Color(0xFF8E8E93), size: 20),
+                  onTap: () {
+                    routeToPage(context, const AboutOmiPage());
                   },
                 ),
               ],
