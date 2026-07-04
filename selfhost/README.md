@@ -133,8 +133,48 @@ Redeploy a known-good build by setting `OMI_IMAGE=…:sha-<commit>` and re-runni
 or fall back to a local build with the bundle's `docker-compose.yml`.
 
 ## App updates
-The app update pipeline now closes the loop end-to-end:
-- **CI:** pushing app changes to `selfhost` auto-builds a signed dev APK with a dynamically derived `versionCode` (`build-app.yml`).
-- **Delivery:** the APK + `latest.json` are published to the VM (admin-run `publish-app-update.sh` over IAP) and served through the auth-gated backend feed; the Basic Auth `/app/*` path is kept as a browser fallback.
-- **In-app:** Settings → About → **Check for updates** compares the running `versionCode` to the feed, downloads + SHA-256-verifies the APK, and launches Android's installer via `open_filex` (user still approves the sideload).
-- **Deferred:** a passive launch-time nudge and a VM-pull cron for hands-off delivery; publishing stays admin-run to preserve the IAP SSH lockdown.
+The Android app-update pipeline is closed-loop: a change lands on `selfhost` → CI builds a signed APK → it's published to the VM → the app checks the auth-gated backend feed and installs the update. No credential is embedded in the app (the existing Firebase ID token gates the feed), and publishing stays admin-run over IAP so the VM SSH lockdown is preserved. Scope is the dev flavor `com.friend.ios.dev` (Android); device firmware OTA is independent (upstream).
+
+```mermaid
+flowchart LR
+  dev["app change on selfhost"] --> ci["build-app.yml<br/>signed APK + latest.json"]
+  ci --> pub["publish-app-update.sh<br/>(admin, over IAP)"]
+  pub --> vm["VM ~/omi-deploy/app-updates/"]
+  vm --> feed["backend /v2/app/android/*<br/>(Firebase-auth'd)"]
+  feed --> app["About → Check for updates<br/>download + SHA-256 + install"]
+```
+
+### Publish an update (operator)
+1. **Land the app change on `selfhost`** (via PR, or an upstream rebase). A push touching `app/**` auto-runs `build-app.yml`; you can also trigger it manually:
+   ```bash
+   gh workflow run build-app.yml --repo cybervoid/omi --ref selfhost
+   gh run list --repo cybervoid/omi --workflow build-app.yml --limit 1   # wait for success
+   ```
+   `build-app` derives `versionName`/`versionCode` from `app/pubspec.yaml` (base build number + `GITHUB_RUN_NUMBER`), so each build is strictly newer than the last and the app can detect it.
+2. **Publish the artifact to the VM** (admin machine, reaches the VM over IAP):
+   ```bash
+   cd ~/Documents/omi/deploy
+   ./publish-app-update.sh <build-app-run-id>
+   ```
+   This copies `omi-dev-release.apk` + `latest.json` into `~/omi-deploy/app-updates/`. GitHub Actions never gets VM SSH keys or inbound access.
+3. **Ensure the backend serves the feed.** The running backend image must include `backend/routers/app_update.py`, and `docker-compose.ghcr.yml` must mount `app-updates/` into the **backend** service (`APP_UPDATES_DIR=/srv/app-updates`) — not just Caddy. If you changed the backend or the mount, redeploy on the VM:
+   ```bash
+   cd ~/omi-deploy && ./pull-deploy.sh
+   # if only the compose mount changed (image digest unchanged), force it:
+   docker compose -f docker-compose.ghcr.yml up -d --force-recreate backend
+   ```
+
+### Update on the device (end user)
+1. Open **Settings → About → Check for updates**.
+2. If the feed's `versionCode` is newer than the installed build, confirm the prompt — the app downloads the APK, verifies its SHA-256 against the metadata, then opens Android's package installer.
+3. Approve the sideload (first time, allow *Install unknown apps* for Omi). Because both builds are signed with the same self-host release key, the update installs **in place** over the existing app, so conversations/settings are preserved.
+
+### Verify the feed
+```bash
+# unauthenticated → 401 (auth enforced)
+curl -sk -o /dev/null -w '%{http_code}\n' https://<VM_HOST>/v2/app/android/latest
+```
+With a valid Firebase ID token, `/v2/app/android/latest` returns the metadata (`versionName`, `versionCode`, `sha256`, `sizeBytes`, `downloadUrl=/v2/app/android/download`) and `/v2/app/android/download` streams the APK whose SHA-256 matches `latest.json`. The Caddy `/app/*` Basic Auth path remains a browser-only fallback.
+
+### Deferred
+A passive launch-time update nudge, and a VM-pull cron that auto-downloads the newest `build-app` artifact into `app-updates/` for hands-off delivery (publishing stays admin-run today to preserve the IAP lockdown).
