@@ -1,54 +1,104 @@
 name: upstream-sync
 
-# Weekly notifier: if BasedHardware/omi `main` has advanced past our `selfhost` base,
-# open (or skip if one is already open) a tracking issue. Rebase is done manually
-# per deploy/RUNBOOK.md so the 0001/0002 patch conflicts get human review.
+# Weekly + manual upstream reconciliation for the patched `selfhost` fork.
+# If `selfhost` is behind BasedHardware/omi it ATTEMPTS a rebase onto the upstream
+# ref on a throwaway `upstream-sync/<upstream-sha>` branch (never touching selfhost):
+#   * clean rebase + backend compiles -> push the candidate, open an issue with the
+#     diff and a one-shot "land" (force-update) command;
+#   * conflicts / broken compile      -> open an issue for a manual rebase, push nothing.
+# A human still reviews + force-updates `selfhost` (deploy/RUNBOOK.md §4a) — we prepare
+# and test the rebase automatically, but never auto-ship upstream into production.
 on:
   schedule:
     - cron: '0 9 * * 1'   # Mondays 09:00 UTC
   workflow_dispatch:
+    inputs:
+      upstream_ref:
+        description: 'Upstream branch or tag to rebase onto'
+        default: main
+        required: false
 
 permissions:
-  contents: read
-  issues: write
+  contents: write   # push the upstream-sync/* candidate branch
+  issues: write     # open/update the tracking issue
+
+concurrency:
+  group: upstream-sync
+  cancel-in-progress: false
 
 jobs:
-  check-upstream:
+  sync:
     runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      REPO: ${{ github.repository }}
+      UPSTREAM_REF: ${{ github.event.inputs.upstream_ref || 'main' }}
+      GIT_EDITOR: 'true'
+      GIT_SEQUENCE_EDITOR: 'true'
     steps:
-      - name: Checkout selfhost
+      - name: Checkout selfhost (full history)
         uses: actions/checkout@v4
         with:
           ref: selfhost
           fetch-depth: 0
 
-      - name: Compare with upstream and open a sync issue if behind
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Rebase onto upstream, test, and report
         run: |
-          set -euo pipefail
+          set -uo pipefail   # NOT -e: rebase/compile failures are handled explicitly
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git remote add upstream https://github.com/BasedHardware/omi.git
-          git fetch --quiet upstream main
-          BASE="$(git merge-base HEAD upstream/main)"
-          AHEAD="$(git rev-list --count "${BASE}..upstream/main")"
-          echo "Upstream main is ${AHEAD} commit(s) ahead of our selfhost base (${BASE})."
-          if [ "${AHEAD}" -eq 0 ]; then
-            echo "Up to date. Nothing to do."
-            exit 0
+          git fetch --quiet upstream "$UPSTREAM_REF" || { echo "::error::fetch upstream/$UPSTREAM_REF failed"; exit 1; }
+
+          TARGET="$(git rev-parse FETCH_HEAD)"
+          BASE="$(git merge-base HEAD "$TARGET")"
+          AHEAD="$(git rev-list --count "${BASE}..${TARGET}")"
+          echo "upstream/$UPSTREAM_REF (${TARGET:0:12}) is ${AHEAD} commit(s) ahead of our base (${BASE:0:12})."
+          if [ "$AHEAD" -eq 0 ]; then echo "Up to date; nothing to do."; exit 0; fi
+
+          SHORT="$(git rev-parse --short "$TARGET")"
+          CAND="upstream-sync/${SHORT}"
+          git log --no-merges --pretty='- %h %s' "${BASE}..${TARGET}" | head -40 > commits.txt || true
+
+          # --- attempt the rebase on a throwaway candidate branch (selfhost is untouched) ---
+          git checkout -B "$CAND" selfhost
+          if git rebase "$TARGET"; then
+            STATUS=clean
+            python3 -m compileall -q backend || STATUS=compile_failed
+            git push -f origin "HEAD:refs/heads/${CAND}" || { echo "::error::push candidate failed"; exit 1; }
+          else
+            STATUS=conflict
+            git diff --name-only --diff-filter=U | sed 's/^/    /' | head -50 > conflicts.txt || true
+            git rebase --abort || true
           fi
-          OPEN="$(gh issue list --state open --search 'in:title Upstream omi is ahead' --json number --jq 'length')"
-          if [ "${OPEN}" != "0" ]; then
-            echo "An open sync issue already exists; skipping."
-            exit 0
-          fi
-          LATEST="$(git log -1 --format='%h %s' upstream/main)"
+          echo "rebase status: $STATUS"
+
+          # --- compose the tracking-issue body ---
+          COMPARE="https://github.com/${REPO}/compare/selfhost...${CAND}"
+          TITLE="Upstream sync ${SHORT} — ${AHEAD} behind"
           {
-            echo "Upstream **BasedHardware/omi** \`main\` is **${AHEAD}** commit(s) ahead of this fork's \`selfhost\` base."
-            echo ""
-            echo "Latest upstream commit: \`${LATEST}\`"
-            echo ""
-            echo "To sync, follow \`deploy/RUNBOOK.md\` §4: fetch \`upstream\`, rebase \`selfhost\` onto the new commit/tag, resolve any conflicts in patches 0001/0002, push, and let \`build-backend\` rebuild the image."
-            echo ""
-            echo "_Auto-generated by .github/workflows/upstream-sync.yml._"
+            if [ "$STATUS" = conflict ]; then
+              echo "Upstream **BasedHardware/omi** \`${UPSTREAM_REF}\` is **${AHEAD}** commit(s) ahead, and an **automatic rebase hit conflicts** — a manual rebase is needed (see \`deploy/RUNBOOK.md\` §4a)."
+              echo; echo "**Conflicting files:**"; echo '```'; cat conflicts.txt 2>/dev/null; echo '```'
+            else
+              EXTRA=""; [ "$STATUS" = compile_failed ] && EXTRA=" — ⚠️ but backend \`compileall\` **FAILED**; review before landing"
+              echo "Upstream **BasedHardware/omi** \`${UPSTREAM_REF}\` is **${AHEAD}** commit(s) ahead. **Automatic rebase was clean**${EXTRA}."
+              echo; echo "Candidate branch: \`${CAND}\` — [review the diff](${COMPARE}). Test gate: backend \`compileall\` $([ "$STATUS" = clean ] && echo 'passed ✅' || echo 'FAILED ❌'); the full CI (backend image + signed APK) runs automatically when you land it."
+              echo; echo "**Land it** (rebase model — this force-updates \`selfhost\`, per RUNBOOK §4a):"
+              echo '```bash'
+              echo "git fetch origin && git branch -f selfhost origin/${CAND} && git push --force-with-lease origin selfhost"
+              echo '```'
+              echo "That push triggers build-backend + build-app; the VM image + app-feed reconcilers then converge automatically. Do **not** merge the candidate via the GitHub UI (rebase model)."
+            fi
+            echo; echo "**Upstream commits (newest first):**"; cat commits.txt 2>/dev/null
+            echo; echo "_Auto-generated by \`.github/workflows/upstream-sync.yml\`._"
           } > body.md
-          gh issue create --title "Upstream omi is ahead — time to sync" --body-file body.md
+
+          # --- open or update one issue per upstream sha ---
+          NUM="$(gh issue list --repo "$REPO" --state open --search "Upstream sync ${SHORT} in:title" --json number --jq '.[0].number // empty')"
+          if [ -n "$NUM" ]; then
+            gh issue edit "$NUM" --repo "$REPO" --title "$TITLE" --body-file body.md && echo "updated issue #$NUM"
+          else
+            gh issue create --repo "$REPO" --title "$TITLE" --body-file body.md
+          fi
