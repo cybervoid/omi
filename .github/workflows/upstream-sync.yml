@@ -43,8 +43,10 @@ jobs:
           fetch-depth: 0
 
       - name: Rebase onto upstream, test, and report
+        env:
+          SYNC_PAT: ${{ secrets.SYNC_PAT }}
         run: |
-          set -uo pipefail   # NOT -e: rebase/compile failures are handled explicitly
+          set -uo pipefail   # NOT -e: rebase/compile/push failures are handled explicitly
 
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -55,7 +57,10 @@ jobs:
           BASE="$(git merge-base HEAD "$TARGET")"
           AHEAD="$(git rev-list --count "${BASE}..${TARGET}")"
           echo "upstream/$UPSTREAM_REF (${TARGET:0:12}) is ${AHEAD} commit(s) ahead of our base (${BASE:0:12})."
-          if [ "$AHEAD" -eq 0 ]; then echo "Up to date; nothing to do."; exit 0; fi
+          if [ "$AHEAD" -eq 0 ]; then
+            echo "### upstream-sync: \`selfhost\` is up to date with upstream/$UPSTREAM_REF ✅" >> "$GITHUB_STEP_SUMMARY"
+            echo "Up to date; nothing to do."; exit 0
+          fi
 
           SHORT="$(git rev-parse --short "$TARGET")"
           CAND="upstream-sync/${SHORT}"
@@ -66,7 +71,6 @@ jobs:
           if git rebase "$TARGET"; then
             STATUS=clean
             python3 -m compileall -q backend || STATUS=compile_failed
-            git push -f origin "HEAD:refs/heads/${CAND}" || { echo "::error::push candidate failed"; exit 1; }
           else
             STATUS=conflict
             git diff --name-only --diff-filter=U | sed 's/^/    /' | head -50 > conflicts.txt || true
@@ -74,31 +78,55 @@ jobs:
           fi
           echo "rebase status: $STATUS"
 
-          # --- compose the tracking-issue body ---
+          # --- optionally push the candidate branch. The built-in GITHUB_TOKEN cannot push
+          #     commits that touch .github/workflows, so pushing needs a workflow-scoped PAT
+          #     in secrets.SYNC_PAT; without it we report-only and the human lands locally. ---
+          PUSHED=0
+          if [ "$STATUS" != conflict ] && [ -n "${SYNC_PAT:-}" ]; then
+            if git push -f "https://x-access-token:${SYNC_PAT}@github.com/${REPO}.git" "HEAD:refs/heads/${CAND}"; then
+              PUSHED=1
+            else
+              echo "::warning::could not push candidate ${CAND} (SYNC_PAT needs Contents+Workflows write)"
+            fi
+          fi
+
+          # --- report: job summary always; issue only if the repo has issues enabled ---
           COMPARE="https://github.com/${REPO}/compare/selfhost...${CAND}"
           TITLE="Upstream sync ${SHORT} — ${AHEAD} behind"
           {
             if [ "$STATUS" = conflict ]; then
-              echo "Upstream **BasedHardware/omi** \`${UPSTREAM_REF}\` is **${AHEAD}** commit(s) ahead, and an **automatic rebase hit conflicts** — a manual rebase is needed (see \`deploy/RUNBOOK.md\` §4a)."
+              echo "## ⚠️ Upstream sync — manual rebase needed"
+              echo "Upstream **BasedHardware/omi** \`${UPSTREAM_REF}\` is **${AHEAD}** commit(s) ahead; the automatic rebase **hit conflicts**."
               echo; echo "**Conflicting files:**"; echo '```'; cat conflicts.txt 2>/dev/null; echo '```'
+            elif [ "$STATUS" = compile_failed ]; then
+              echo "## ⚠️ Upstream sync — clean rebase, but backend compile FAILED"
+              echo "Upstream \`${UPSTREAM_REF}\` is **${AHEAD}** ahead; rebase was clean but backend \`compileall\` **FAILED ❌** — review before landing."
             else
-              EXTRA=""; [ "$STATUS" = compile_failed ] && EXTRA=" — ⚠️ but backend \`compileall\` **FAILED**; review before landing"
-              echo "Upstream **BasedHardware/omi** \`${UPSTREAM_REF}\` is **${AHEAD}** commit(s) ahead. **Automatic rebase was clean**${EXTRA}."
-              echo; echo "Candidate branch: \`${CAND}\` — [review the diff](${COMPARE}). Test gate: backend \`compileall\` $([ "$STATUS" = clean ] && echo 'passed ✅' || echo 'FAILED ❌'); the full CI (backend image + signed APK) runs automatically when you land it."
-              echo; echo "**Land it** (rebase model — this force-updates \`selfhost\`, per RUNBOOK §4a):"
+              echo "## ✅ Upstream sync — clean rebase"
+              echo "Upstream \`${UPSTREAM_REF}\` is **${AHEAD}** commit(s) ahead; automatic rebase was clean and backend \`compileall\` passed ✅."
+            fi
+            [ "$PUSHED" = 1 ] && { echo; echo "Candidate branch \`${CAND}\` pushed — [review the diff](${COMPARE})."; }
+            echo; echo "### Land it (rebase model — force-updates \`selfhost\`, per RUNBOOK §4a)"
+            if [ "$PUSHED" = 1 ]; then
+              echo "The rebase is already prepared on \`${CAND}\`:"
               echo '```bash'
               echo "git fetch origin && git branch -f selfhost origin/${CAND} && git push --force-with-lease origin selfhost"
               echo '```'
-              echo "That push triggers build-backend + build-app; the VM image + app-feed reconcilers then converge automatically. Do **not** merge the candidate via the GitHub UI (rebase model)."
+            else
+              echo "Run locally (your credentials carry the \`workflow\` scope the CI token lacks):"
+              echo '```bash'
+              echo "git fetch upstream && git checkout selfhost && git rebase ${TARGET}   # resolve conflicts if any"
+              echo "git push --force-with-lease origin selfhost"
+              echo '```'
             fi
-            echo; echo "**Upstream commits (newest first):**"; cat commits.txt 2>/dev/null
-            echo; echo "_Auto-generated by \`.github/workflows/upstream-sync.yml\`._"
-          } > body.md
+            echo "That push triggers build-backend + build-app; the VM image + app-feed reconcilers then converge automatically."
+            echo; echo "**Upstream commits (newest first, up to 40):**"; cat commits.txt 2>/dev/null
+          } | tee body.md >> "$GITHUB_STEP_SUMMARY"
 
-          # --- open or update one issue per upstream sha ---
-          NUM="$(gh issue list --repo "$REPO" --state open --search "Upstream sync ${SHORT} in:title" --json number --jq '.[0].number // empty')"
-          if [ -n "$NUM" ]; then
-            gh issue edit "$NUM" --repo "$REPO" --title "$TITLE" --body-file body.md && echo "updated issue #$NUM"
+          if [ "$(gh repo view "$REPO" --json hasIssuesEnabled --jq .hasIssuesEnabled 2>/dev/null)" = "true" ]; then
+            NUM="$(gh issue list --repo "$REPO" --state open --search "Upstream sync ${SHORT} in:title" --json number --jq '.[0].number // empty' 2>/dev/null)"
+            if [ -n "$NUM" ]; then gh issue edit "$NUM" --repo "$REPO" --title "$TITLE" --body-file body.md || true
+            else gh issue create --repo "$REPO" --title "$TITLE" --body-file body.md || true; fi
           else
-            gh issue create --repo "$REPO" --title "$TITLE" --body-file body.md
+            echo "Issues disabled on ${REPO}; the report is in this run's job summary only."
           fi
