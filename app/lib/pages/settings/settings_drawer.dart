@@ -10,6 +10,7 @@ import 'package:omi/services/auth_service.dart';
 import 'package:omi/pages/settings/developer.dart';
 import 'package:omi/pages/settings/notifications_settings_page.dart';
 import 'package:omi/pages/settings/permissions_page.dart';
+import 'package:omi/pages/settings/about.dart';
 import 'package:omi/pages/settings/profile.dart';
 import 'package:omi/pages/memories/page.dart';
 import 'package:omi/pages/settings/integrations_page.dart';
@@ -33,9 +34,9 @@ import '../conversations/auto_sync_page.dart';
 import '../conversations/sync_page.dart';
 
 class _SearchableItem {
-  final String title;
-  final Widget icon;
-  final VoidCallback onTap;
+  const String title;
+  const Widget icon;
+  const VoidCallback onTap;
 
   const _SearchableItem({required this.title, required this.icon, required this.onTap});
 }
@@ -83,13 +84,13 @@ class _SettingsDrawerState extends State<SettingsDrawer> {
 
   Future<String> _getShortDeviceInfo() async {
     try {
-      final deviceInfoPlugin = DeviceInfoPlugin();
+      const deviceInfoPlugin = DeviceInfoPlugin();
 
       if (Platform.isAndroid) {
-        final androidInfo = await deviceInfoPlugin.androidInfo;
+        const androidInfo = await deviceInfoPlugin.androidInfo;
         return '${androidInfo.brand} ${androidInfo.model} — Android ${androidInfo.version.release}';
       } else if (Platform.isIOS) {
-        final iosInfo = await deviceInfoPlugin.iosInfo;
+        const iosInfo = await deviceInfoPlugin.iosInfo;
         return '${iosInfo.name} — iOS ${iosInfo.systemVersion}';
       } else {
         return context.l10n.unknownDevice;
@@ -101,8 +102,8 @@ class _SettingsDrawerState extends State<SettingsDrawer> {
 
   Future<void> _loadAppAndDeviceInfo() async {
     try {
-      final packageInfo = await PackageInfo.fromPlatform();
-      final shortDevice = await _getShortDeviceInfo();
+      const packageInfo = await PackageInfo.fromPlatform();
+      const shortDevice = await _getShortDeviceInfo();
 
       if (mounted) {
         setState(() {
@@ -208,7 +209,7 @@ class _SettingsDrawerState extends State<SettingsDrawer> {
       return const SizedBox.shrink();
     }
 
-    final displayText = buildVersion != null ? '${version ?? ""} ($buildVersion)' : (version ?? '');
+    const displayText = buildVersion != null ? '${version ?? ""} ($buildVersion)' : (version ?? '');
 
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,
@@ -230,9 +231,9 @@ class _SettingsDrawerState extends State<SettingsDrawer> {
   }
 
   Future<void> _copyVersionInfo() async {
-    final versionPart = buildVersion != null ? 'Omi AI ${version ?? ""} ($buildVersion)' : 'Omi AI ${version ?? ""}';
-    final devicePart = shortDeviceInfo ?? context.l10n.unknownDevice;
-    final fullVersionInfo = '$versionPart — $devicePart';
+    const versionPart = buildVersion != null ? 'Omi AI ${version ?? ""} ($buildVersion)' : 'Omi AI ${version ?? ""}';
+    const devicePart = shortDeviceInfo ?? context.l10n.unknownDevice;
+    const fullVersionInfo = '$versionPart — $devicePart';
 
     await Clipboard.setData(ClipboardData(text: fullVersionInfo));
 
@@ -242,7 +243,7 @@ class _SettingsDrawerState extends State<SettingsDrawer> {
   }
 
   void _showCopyNotification() {
-    final overlay = Overlay.of(context);
+    const overlay = Overlay.of(context);
     late OverlayEntry overlayEntry;
 
     overlayEntry = OverlayEntry(
@@ -282,13 +283,13 @@ class _SettingsDrawerState extends State<SettingsDrawer> {
   }
 
   List<_SearchableItem> _buildSearchableItems(BuildContext context) {
-    final deviceProvider = Provider.of<DeviceProvider>(context, listen: false);
+    const deviceProvider = Provider.of<DeviceProvider>(context, listen: false);
 
     void goToProfile() => routeToPage(context, const ProfilePage());
     void goToNotifications() => routeToPage(context, const NotificationsSettingsPage());
     void goToUsage() => Navigator.of(context).push(MaterialPageRoute(builder: (context) => const UsagePage()));
     void goToSync() {
-      final page = SharedPreferencesUtil().deviceSupportsMultiFileSync ? const AutoSyncPage() : const SyncPage();
+      const page = SharedPreferencesUtil().deviceSupportsMultiFileSync ? const AutoSyncPage() : const SyncPage();
       Navigator.of(context).push(MaterialPageRoute(builder: (context) => page));
     }
 
@@ -302,6 +303,7 @@ class _SettingsDrawerState extends State<SettingsDrawer> {
 
     void goToMemories() => routeToPage(context, const MemoriesPage());
     void goToDeveloper() async => await routeToPage(context, const DeveloperSettingsPage());
+    void goToAbout() => routeToPage(context, const AboutOmiPage());
 
     const profileIcon = FaIcon(FontAwesomeIcons.solidUser, color: Color(0xFF8E8E93), size: 20);
     const notifIcon = FaIcon(FontAwesomeIcons.solidBell, color: Color(0xFF8E8E93), size: 20);
@@ -312,8 +314,9 @@ class _SettingsDrawerState extends State<SettingsDrawer> {
     const devIcon = FaIcon(FontAwesomeIcons.code, color: Color(0xFF8E8E93), size: 20);
     const intIcon = FaIcon(FontAwesomeIcons.networkWired, color: Color(0xFF8E8E93), size: 20);
     const syncIcon = FaIcon(FontAwesomeIcons.solidCloud, color: Color(0xFF8E8E93), size: 20);
+    const aboutIcon = FaIcon(FontAwesomeIcons.circleInfo, color: Color(0xFF8E8E93), size: 20);
 
-    final items = <_SearchableItem>[
+    const items = <_SearchableItem>[
       // --- Profile ---
       _SearchableItem(title: context.l10n.profile, icon: profileIcon, onTap: goToProfile),
       _SearchableItem(title: context.l10n.name, icon: profileIcon, onTap: goToProfile),
@@ -364,7 +367,7 @@ class _SettingsDrawerState extends State<SettingsDrawer> {
           title: context.l10n.feedbackBug,
           icon: const FaIcon(FontAwesomeIcons.solidEnvelope, color: Color(0xFF8E8E93), size: 20),
           onTap: () async {
-            final Uri url = Uri.parse('https://feedback.omi.me/');
+            const Uri url = Uri.parse('https://feedback.omi.me/');
             if (await canLaunchUrl(url)) await launchUrl(url, mode: LaunchMode.inAppBrowserView);
           },
         ),
@@ -372,7 +375,7 @@ class _SettingsDrawerState extends State<SettingsDrawer> {
           title: context.l10n.helpCenter,
           icon: const FaIcon(FontAwesomeIcons.book, color: Color(0xFF8E8E93), size: 20),
           onTap: () async {
-            final Uri url = Uri.parse('https://help.omi.me/en/');
+            const Uri url = Uri.parse('https://help.omi.me/en/');
             if (await canLaunchUrl(url)) {
               try {
                 await launchUrl(url, mode: LaunchMode.inAppBrowserView);
@@ -403,6 +406,18 @@ class _SettingsDrawerState extends State<SettingsDrawer> {
           ChangelogSheet.showWithLoading(context, () => getAppChangelogs(limit: 5));
         },
       ),
+      // --- About / updates ---
+      _SearchableItem(title: context.l10n.aboutOmi, icon: aboutIcon, onTap: goToAbout),
+      _SearchableItem(title: context.l10n.checkForUpdates, icon: aboutIcon, onTap: goToAbout),
+      // --- Mac app ---
+      _SearchableItem(
+        title: context.l10n.getOmiForMac,
+        icon: FaIcon(FontAwesomeIcons.desktop, color: Color(0xFF8E8E93), size: 20),
+        onTap: () async {
+          const Uri url = Uri.parse('https://apps.apple.com/us/app/omi-ai-scale-yourself/id6502156163');
+          await launchUrl(url, mode: LaunchMode.externalApplication);
+        },
+      ),
       // --- Referral ---
       _SearchableItem(
         title: context.l10n.referralProgram,
@@ -414,7 +429,7 @@ class _SettingsDrawerState extends State<SettingsDrawer> {
         title: context.l10n.signOut,
         icon: const FaIcon(FontAwesomeIcons.rightFromBracket, color: Color(0xFF8E8E93), size: 20),
         onTap: () async {
-          final navigator = Navigator.of(context);
+          const navigator = Navigator.of(context);
           navigator.pop();
           await showDialog(
             context: context,
@@ -424,7 +439,7 @@ class _SettingsDrawerState extends State<SettingsDrawer> {
                 () => Navigator.of(ctx).pop(),
                 () async {
                   Navigator.of(ctx).pop();
-                  final rootCtx = globalNavigatorKey.currentContext;
+                  const rootCtx = globalNavigatorKey.currentContext;
                   if (rootCtx != null && rootCtx.mounted) {
                     clearAllUserState(rootCtx);
                   }
@@ -447,9 +462,9 @@ class _SettingsDrawerState extends State<SettingsDrawer> {
   }
 
   Widget _buildSearchResults(BuildContext context) {
-    final allItems = _buildSearchableItems(context);
-    final query = _searchQuery.toLowerCase();
-    final filtered = allItems.where((item) => item.title.toLowerCase().contains(query)).toList();
+    const allItems = _buildSearchableItems(context);
+    const query = _searchQuery.toLowerCase();
+    const filtered = allItems.where((item) => item.title.toLowerCase().contains(query)).toList();
 
     if (filtered.isEmpty) {
       return const Center(
@@ -509,8 +524,8 @@ class _SettingsDrawerState extends State<SettingsDrawer> {
                 const Divider(height: 1, color: Color(0xFF3C3C43)),
                 Consumer<UsageProvider>(
                   builder: (context, usageProvider, child) {
-                    final sp = usageProvider.subscription?.subscription.plan;
-                    final isUnlimited = sp?.isPaid ?? false;
+                    const sp = usageProvider.subscription?.subscription.plan;
+                    const isUnlimited = sp?.isPaid ?? false;
                     return _buildSettingsItem(
                       title: context.l10n.planAndUsage,
                       icon: const FaIcon(FontAwesomeIcons.chartLine, color: Color(0xFF8E8E93), size: 20),
@@ -550,7 +565,7 @@ class _SettingsDrawerState extends State<SettingsDrawer> {
                   title: context.l10n.offlineSync,
                   icon: const FaIcon(FontAwesomeIcons.solidCloud, color: Color(0xFF8E8E93), size: 20),
                   onTap: () {
-                    final page =
+                    const page =
                         SharedPreferencesUtil().deviceSupportsMultiFileSync ? const AutoSyncPage() : const SyncPage();
                     Navigator.of(context).push(MaterialPageRoute(builder: (context) => page));
                   },
@@ -604,7 +619,7 @@ class _SettingsDrawerState extends State<SettingsDrawer> {
                     title: context.l10n.feedbackBug,
                     icon: const FaIcon(FontAwesomeIcons.solidEnvelope, color: Color(0xFF8E8E93), size: 20),
                     onTap: () async {
-                      final Uri url = Uri.parse('https://feedback.omi.me/');
+                      const Uri url = Uri.parse('https://feedback.omi.me/');
                       if (await canLaunchUrl(url)) {
                         await launchUrl(url, mode: LaunchMode.inAppBrowserView);
                       }
@@ -615,7 +630,7 @@ class _SettingsDrawerState extends State<SettingsDrawer> {
                     title: context.l10n.helpCenter,
                     icon: const FaIcon(FontAwesomeIcons.book, color: Color(0xFF8E8E93), size: 20),
                     onTap: () async {
-                      final Uri url = Uri.parse('https://help.omi.me/en/');
+                      const Uri url = Uri.parse('https://help.omi.me/en/');
                       if (await canLaunchUrl(url)) {
                         try {
                           await launchUrl(url, mode: LaunchMode.inAppBrowserView);
@@ -645,6 +660,29 @@ class _SettingsDrawerState extends State<SettingsDrawer> {
                 ),
                 const Divider(height: 1, color: Color(0xFF3C3C43)),
                 _buildSettingsItem(
+                  title: context.l10n.aboutOmi,
+                  icon: const FaIcon(FontAwesomeIcons.circleInfo, color: Color(0xFF8E8E93), size: 20),
+                  onTap: () {
+                    routeToPage(context, const AboutOmiPage());
+                  },
+                ),
+              ],
+            ),
+            const SizedBox(height: 32),
+
+            // Share & Get Section
+            _buildSectionContainer(
+              children: [
+                _buildSettingsItem(
+                  title: context.l10n.getOmiForMac,
+                  icon: FaIcon(FontAwesomeIcons.desktop, color: Color(0xFF8E8E93), size: 20),
+                  onTap: () async {
+                    const Uri url = Uri.parse('https://apps.apple.com/us/app/omi-ai-scale-yourself/id6502156163');
+                    await launchUrl(url, mode: LaunchMode.externalApplication);
+                  },
+                ),
+                const Divider(height: 1, color: Color(0xFF3C3C43)),
+                _buildSettingsItem(
                   title: context.l10n.referralProgram,
                   icon: const FaIcon(FontAwesomeIcons.gift, color: Color(0xFF8E8E93), size: 20),
                   showNewTag: true,
@@ -663,7 +701,7 @@ class _SettingsDrawerState extends State<SettingsDrawer> {
                   title: context.l10n.signOut,
                   icon: const FaIcon(FontAwesomeIcons.rightFromBracket, color: Color(0xFF8E8E93), size: 20),
                   onTap: () async {
-                    final navigator = Navigator.of(context);
+                    const navigator = Navigator.of(context);
 
                     navigator.pop(); // Close the settings drawer
 
@@ -680,7 +718,7 @@ class _SettingsDrawerState extends State<SettingsDrawer> {
                             // confirm dialog), so routing through it is a
                             // silent no-op. Use the root navigator instead so
                             // we always land back on the auth screen.
-                            final rootCtx = globalNavigatorKey.currentContext;
+                            const rootCtx = globalNavigatorKey.currentContext;
                             if (rootCtx != null && rootCtx.mounted) {
                               clearAllUserState(rootCtx);
                             }
