@@ -44,9 +44,9 @@ Both workflows live in `.github/workflows/` on this branch.
 - **Builds** `backend/Dockerfile` (build context = repo root, `--build-arg PYTHON_BASE_IMAGE=python:3.11-slim`, `linux/amd64`) and **pushes** `ghcr.io/cybervoid/omi-backend:latest` + `:sha-<commit>` using the built-in `GITHUB_TOKEN`.
 - The package is **public**, so the VM pulls anonymously (no registry login). If a rebuilt package ever defaults back to private, flip it public again or `docker login ghcr.io` on the VM with a `read:packages` token.
 
-### `upstream-sync.yml` — upstream drift notifier
-- **Trigger:** weekly (Mondays 09:00 UTC) + manual.
-- Compares this branch's base against `upstream/main`; if upstream is ahead, it opens (or reuses) a tracking **issue**. It deliberately does **not** auto-rebase — upgrades are manual so patch conflicts get human review.
+### `upstream-sync.yml` — upstream drift + auto-rebase (prepare/test only)
+- **Trigger:** weekly (Mondays 09:00 UTC) + manual (`upstream_ref` input, default `main`).
+- If `selfhost` is behind `upstream`, it **attempts a rebase** of the self-host patches onto upstream on a throwaway `upstream-sync/<sha>` branch (never touching `selfhost`), runs a backend compile gate, and reports the result (clean/conflict + the exact land command) in the **Actions run summary**. Landing stays a **manual, human-reviewed** force-update (per the private runbook) — it prepares + tests the rebase but never auto-ships upstream to production.
 
 ### `build-app.yml` — signed dev APK artifact
 - **Trigger:** push to `selfhost` touching `app/**` (or the workflow), or manual `workflow_dispatch`.
