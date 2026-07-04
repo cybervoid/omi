@@ -133,30 +133,30 @@ Redeploy a known-good build by setting `OMI_IMAGE=…:sha-<commit>` and re-runni
 or fall back to a local build with the bundle's `docker-compose.yml`.
 
 ## App updates
-The Android app-update pipeline is closed-loop: a change lands on `selfhost` → CI builds a signed APK → it's published to the VM → the app checks the auth-gated backend feed and installs the update. No credential is embedded in the app (the existing Firebase ID token gates the feed), and publishing stays admin-run over IAP so the VM SSH lockdown is preserved. Scope is the dev flavor `com.friend.ios.dev` (Android); device firmware OTA is independent (upstream).
+The Android app-update pipeline is closed-loop and autonomous: a change lands on `selfhost` → CI builds a signed APK → the **VM reconciles** the newest build into its feed → the app checks the auth-gated backend feed and installs the update. No credential is embedded in the app (the existing Firebase ID token gates the feed), and the VM only ever **pulls** from GitHub (read-only, outbound), so the IAP SSH lockdown is preserved. Scope is the dev flavor `com.friend.ios.dev` (Android); device firmware OTA is independent (upstream).
 
 ```mermaid
 flowchart LR
   dev["app change on selfhost"] --> ci["build-app.yml<br/>signed APK + latest.json"]
-  ci --> pub["publish-app-update.sh<br/>(admin, over IAP)"]
-  pub --> vm["VM ~/omi-deploy/app-updates/"]
+  ci --> reco["VM reconciler (15-min cron)<br/>read-only pull; publish if newer<br/>(or publish-app-update.sh, manual)"]
+  reco --> vm["VM ~/omi-deploy/app-updates/"]
   vm --> feed["backend /v2/app/android/*<br/>(Firebase-auth'd)"]
   feed --> app["About → Check for updates<br/>download + SHA-256 + install"]
 ```
 
-### Publish an update (operator)
+### Ship an update (operator)
 1. **Land the app change on `selfhost`** (via PR, or an upstream rebase). A push touching `app/**` auto-runs `build-app.yml`; you can also trigger it manually:
    ```bash
    gh workflow run build-app.yml --repo cybervoid/omi --ref selfhost
    gh run list --repo cybervoid/omi --workflow build-app.yml --limit 1   # wait for success
    ```
    `build-app` derives `versionName`/`versionCode` from `app/pubspec.yaml` (base build number + `GITHUB_RUN_NUMBER`), so each build is strictly newer than the last and the app can detect it.
-2. **Publish the artifact to the VM** (admin machine, reaches the VM over IAP):
+2. **Delivery is automatic.** A reconciler on the VM (15-min timer) pulls the newest successful `build-app` build, SHA-256-verifies it, and publishes it into `~/omi-deploy/app-updates/` only when newer — read-only + outbound-only, so the IAP lockdown holds (specifics in the private runbook). To publish immediately instead of waiting for the timer, run the admin helper:
    ```bash
    cd ~/Documents/omi/deploy
    ./publish-app-update.sh <build-app-run-id>
    ```
-   This copies `omi-dev-release.apk` + `latest.json` into `~/omi-deploy/app-updates/`. GitHub Actions never gets VM SSH keys or inbound access.
+   Either path lands `omi-dev-release.apk` + `latest.json` in `~/omi-deploy/app-updates/`; GitHub Actions never gets VM SSH keys or inbound access.
 3. **Ensure the backend serves the feed.** The running backend image must include `backend/routers/app_update.py`, and `docker-compose.ghcr.yml` must mount `app-updates/` into the **backend** service (`APP_UPDATES_DIR=/srv/app-updates`) — not just Caddy. If you changed the backend or the mount, redeploy on the VM:
    ```bash
    cd ~/omi-deploy && ./pull-deploy.sh
@@ -177,4 +177,4 @@ curl -sk -o /dev/null -w '%{http_code}\n' https://<VM_HOST>/v2/app/android/lates
 With a valid Firebase ID token, `/v2/app/android/latest` returns the metadata (`versionName`, `versionCode`, `sha256`, `sizeBytes`, `downloadUrl=/v2/app/android/download`) and `/v2/app/android/download` streams the APK whose SHA-256 matches `latest.json`. The Caddy `/app/*` Basic Auth path remains a browser-only fallback.
 
 ### Deferred
-A passive launch-time update nudge, and a VM-pull cron that auto-downloads the newest `build-app` artifact into `app-updates/` for hands-off delivery (publishing stays admin-run today to preserve the IAP lockdown).
+A passive launch-time update nudge in the app (the manual **About → Check for updates** remains the trigger). Autonomous VM-pull delivery is now implemented — see "Ship an update" above.
