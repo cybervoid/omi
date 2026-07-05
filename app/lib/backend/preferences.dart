@@ -486,6 +486,12 @@ class SharedPreferencesUtil {
 
   set previousStorageBytes(int value) => saveInt('previousStorageBytes', value);
 
+  // Self-host in-app updater: highest build we've already nudged about
+  // (throttles the launch/resume update nudge to once per new build).
+  int get lastNotifiedUpdateVersionCode => getInt('lastNotifiedUpdateVersionCode', defaultValue: 0);
+
+  set lastNotifiedUpdateVersionCode(int value) => saveInt('lastNotifiedUpdateVersionCode', value);
+
   int get enabledAppsCount => appsList.where((element) => element.enabled).length;
 
   int get enabledAppsIntegrationsCount =>

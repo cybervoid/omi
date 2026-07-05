@@ -10,6 +10,7 @@ import 'package:omi/app_globals.dart';
 import 'package:omi/pages/home/page.dart';
 import 'package:omi/utils/l10n_extensions.dart';
 import 'package:omi/utils/logger.dart';
+import 'package:omi/widgets/app_update_dialog.dart';
 
 // Re-export the main notification service for backward compatibility
 // All notification functionality is now handled by the platform-aware service
@@ -58,7 +59,11 @@ class NotificationUtil {
     if (receivedAction.payload == null || receivedAction.payload!.isEmpty) {
       return;
     }
-    await _handleAppLinkOrDeepLink(receivedAction.payload!);
+    // Self-host "update available" notification -> open the in-app update flow.
+    if (receivedAction.payload!['action'] == 'app_update') {
+      await openAppUpdateFlow();
+      return;
+    }
   }
 
   /// Public entry for FCM background/terminated notification taps (#5126).
@@ -133,6 +138,25 @@ class NotificationUtil {
         title: ctx?.l10n.fallNotificationTitle ?? 'Ouch',
         body: ctx?.l10n.fallNotificationBody ?? 'Did you fall?',
         wakeUpScreen: true,
+      ),
+    );
+  }
+
+  /// Posts a local "update available" notification for the self-host build.
+  /// Tapping it routes into the in-app update flow (see [onActionReceivedMethodImpl]).
+  static Future<void> showAppUpdateNotification(String versionName) async {
+    final allowed = await AwesomeNotifications().isNotificationAllowed();
+    if (!allowed) return;
+
+    final ctx = globalNavigatorKey.currentContext;
+    await AwesomeNotifications().createNotification(
+      content: NotificationContent(
+        id: 7,
+        channelKey: 'channel',
+        actionType: ActionType.Default,
+        title: ctx?.l10n.updateAvailable ?? 'Update available',
+        body: ctx != null ? ctx.l10n.updateAvailableDescription(versionName) : 'Version $versionName is available.',
+        payload: {'action': 'app_update'},
       ),
     );
   }

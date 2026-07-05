@@ -69,6 +69,7 @@ import 'package:omi/providers/usage_provider.dart';
 import 'package:omi/providers/user_provider.dart';
 import 'package:omi/providers/voice_recorder_provider.dart';
 import 'package:omi/providers/phone_call_provider.dart';
+import 'package:omi/services/app_update_nudge.dart';
 import 'package:omi/services/auth_service.dart';
 import 'package:omi/services/notifications.dart';
 import 'package:omi/services/notifications/action_item_notification_handler.dart';
@@ -278,6 +279,10 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     if (SharedPreferencesUtil().devLogsToFileEnabled) {
       DebugLogManager.setEnabled(true);
     }
+    // Self-host: check the update feed once the first frame is up.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      AppUpdateNudge.instance.maybeCheckAndNudge();
+    });
 
     super.initState();
   }
@@ -298,7 +303,6 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     final resumeUser = FirebaseAuth.instance.currentUser;
     final resumeOwner = (resumeUser != null && !resumeUser.isAnonymous) ? resumeUser.uid : null;
     await AccountCutoverRuntime.instance.bindAuthenticatedOwner(resumeOwner);
-    SyncReconciler.instance.onForeground();
     unawaited(SyncUploadGate.instance.reconcileFairUseStatus());
   }
 
@@ -308,6 +312,8 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
 
     if (state == AppLifecycleState.resumed) {
       unawaited(_refreshAccountCutoverThenWakeUploads());
+      // Self-host: re-check the update feed when returning to the foreground.
+      AppUpdateNudge.instance.maybeCheckAndNudge();
     } else if (state == AppLifecycleState.paused) {
       SyncReconciler.instance.onBackground();
       _onAppPaused();
@@ -336,8 +342,13 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           update: (BuildContext context, value, MessageProvider? previous) =>
               (previous?..updateAppProvider(value)) ?? MessageProvider(),
         ),
-        ChangeNotifierProxyProvider4<ConversationProvider, MessageProvider, PeopleProvider, UsageProvider,
-            CaptureProvider>(
+        ChangeNotifierProxyProvider4<
+          ConversationProvider,
+          MessageProvider,
+          PeopleProvider,
+          UsageProvider,
+          CaptureProvider
+        >(
           create: (context) => CaptureProvider(),
           update: (BuildContext context, conversation, message, people, usage, CaptureProvider? previous) {
             final externalActions = ProviderCaptureExternalActions(
