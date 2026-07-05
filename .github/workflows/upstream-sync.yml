@@ -1,6 +1,6 @@
 name: upstream-sync
 
-# Weekly + manual upstream reconciliation for the patched `selfhost` fork.
+# Daily + manual upstream reconciliation for the patched `selfhost` fork.
 # If `selfhost` is behind BasedHardware/omi it ATTEMPTS a rebase onto the upstream
 # ref on a throwaway `upstream-sync/<upstream-sha>` branch (never touching selfhost):
 #   * clean rebase + backend compiles -> push the candidate, open an issue with the
@@ -10,7 +10,7 @@ name: upstream-sync
 # and test the rebase automatically, but never auto-ship upstream into production.
 on:
   schedule:
-    - cron: '0 9 * * 1'   # Mondays 09:00 UTC
+    - cron: '0 9 * * *'   # daily 09:00 UTC
   workflow_dispatch:
     inputs:
       upstream_ref:
@@ -59,6 +59,12 @@ jobs:
           echo "upstream/$UPSTREAM_REF (${TARGET:0:12}) is ${AHEAD} commit(s) ahead of our base (${BASE:0:12})."
           if [ "$AHEAD" -eq 0 ]; then
             echo "### upstream-sync: \`selfhost\` is up to date with upstream/$UPSTREAM_REF ✅" >> "$GITHUB_STEP_SUMMARY"
+            # caught up — close any lingering open "Upstream sync" issues
+            if [ "$(gh repo view "$REPO" --json hasIssuesEnabled --jq .hasIssuesEnabled 2>/dev/null)" = "true" ]; then
+              for OLD in $(gh issue list --repo "$REPO" --state open --search "Upstream sync in:title" --json number --jq '.[].number' 2>/dev/null); do
+                gh issue close "$OLD" --repo "$REPO" --comment "\`selfhost\` is now up to date with upstream/${UPSTREAM_REF}; closing." || true
+              done
+            fi
             echo "Up to date; nothing to do."; exit 0
           fi
 
@@ -125,8 +131,16 @@ jobs:
 
           if [ "$(gh repo view "$REPO" --json hasIssuesEnabled --jq .hasIssuesEnabled 2>/dev/null)" = "true" ]; then
             NUM="$(gh issue list --repo "$REPO" --state open --search "Upstream sync ${SHORT} in:title" --json number --jq '.[0].number // empty' 2>/dev/null)"
-            if [ -n "$NUM" ]; then gh issue edit "$NUM" --repo "$REPO" --title "$TITLE" --body-file body.md || true
-            else gh issue create --repo "$REPO" --title "$TITLE" --body-file body.md || true; fi
+            if [ -n "$NUM" ]; then
+              gh issue edit "$NUM" --repo "$REPO" --title "$TITLE" --body-file body.md || true
+            else
+              # supersede: close open issues for older upstream tips before opening the new one
+              for OLD in $(gh issue list --repo "$REPO" --state open --search "Upstream sync in:title" --json number --jq '.[].number' 2>/dev/null); do
+                gh issue close "$OLD" --repo "$REPO" --comment "Superseded by a newer upstream tip (${SHORT})." || true
+              done
+              ASSIGN=""; [ -n "${GITHUB_REPOSITORY_OWNER:-}" ] && ASSIGN="--assignee ${GITHUB_REPOSITORY_OWNER}"
+              gh issue create --repo "$REPO" --title "$TITLE" --body-file body.md $ASSIGN || true
+            fi
           else
             echo "Issues disabled on ${REPO}; the report is in this run's job summary only."
           fi
