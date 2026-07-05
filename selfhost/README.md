@@ -102,13 +102,14 @@ $DC logs --since 10m backend 2>&1 | grep -iE "error|traceback" || echo "no error
 Expect: Redis `PONG`; the diarizer `/health` healthy (Jetson reachable over Tailscale); the pusher
 startup line present; the finalizer printing `Sweep start … / Sweep done …` (proves Firestore
 connectivity and exercises patch 0002); and no errors in recent backend logs.
-### Latest run — 2026-06-29
-All checks **passed** on `ghcr.io/cybervoid/omi-backend:latest` (CI-built, auto-deployed):
-- Public: `/docs` 200, `/openapi.json` 200 (350 routes), `/v1/conversations` 401, `/v1/conversations/count` 401.
-- Redis `PONG`; pusher `Application startup complete`; backend logs clean (no errors/tracebacks in 10m).
-- Firestore reachable — finalizer dry-run: `Sweep start: users=1 …` → `Sweep done: scanned=0 finalized=0`.
-- Diarizer `/health` → `{"status":"healthy"}` over Tailscale.
-- Patches: **0002** finalizer verified via dry-run; **0001** SignBlob loads clean (audio playback validated separately).
+### Latest run — 2026-07-05 (post upstream rebase → `1.0.542`)
+All checks **passed** on `ghcr.io/cybervoid/omi-backend:latest` after rebasing the self-host patches onto upstream `b61b0141` (app `1.0.542`, versionCode 978). One missing Firestore index surfaced and was fixed (last bullet).
+- Public: `/docs` 200, `/openapi.json` 200 (**371 routes**), `/v1/conversations` 401, `/v1/conversations/count` 401, `/v2/app/android/latest` 401.
+- Redis `PONG`; pusher `Application startup complete`; Diarizer `/health` → `{"status":"healthy"}` over Tailscale.
+- Firestore reachable — finalizer dry-run: `Sweep start: users=2 …` → `Sweep done: scanned=0 finalized=0` (patch **0002**).
+- App-update pipeline end-to-end: a device auto-updated `1.0.538+906` → `1.0.542+978` (patch **0003** feed).
+- Patches verified: **0001** SignBlob loads clean, **0002** finalizer dry-run, **0003** feed serves 978.
+- **Found + fixed:** chat `GET /v2/messages` 500'd — the `messages` query (`plugin_id` == … order by `created_at` desc) needed a composite index missing on this project. Created `messages(plugin_id ASC, created_at DESC)` (index `CICAgJjmiJEK`), added it to `firestore.indexes.json`, and verified the query returns OK.
 
 ## Maintenance
 ### Upgrade from upstream
