@@ -8,6 +8,7 @@ import 'package:omi/services/app_update_service.dart';
 import 'package:omi/utils/analytics/intercom.dart';
 import 'package:omi/utils/l10n_extensions.dart';
 import 'package:omi/utils/other/temp.dart';
+import 'package:omi/widgets/app_update_dialog.dart';
 
 class AboutOmiPage extends StatefulWidget {
   const AboutOmiPage({super.key});
@@ -42,74 +43,14 @@ class _AboutOmiPageState extends State<AboutOmiPage> {
       builder: (ctx) => AlertDialog(
         title: Text(title),
         content: Text(message),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: Text(context.l10n.ok)),
-        ],
+        actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: Text(context.l10n.ok))],
       ),
     );
   }
 
   void _showUpdateDialog(AppUpdateInfo info) {
-    double progress = 0;
-    bool downloading = false;
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (ctx) {
-        return StatefulBuilder(
-          builder: (ctx, setDialogState) {
-            return AlertDialog(
-              title: Text(context.l10n.updateAvailable),
-              content: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(context.l10n.updateAvailableDescription(info.versionName)),
-                  if (downloading) ...[
-                    const SizedBox(height: 16),
-                    LinearProgressIndicator(value: progress > 0 ? progress : null),
-                    const SizedBox(height: 8),
-                    Text('${(progress * 100).clamp(0, 100).toStringAsFixed(0)}%'),
-                  ],
-                ],
-              ),
-              actions: [
-                TextButton(
-                  onPressed: downloading ? null : () => Navigator.pop(ctx),
-                  child: Text(context.l10n.cancel),
-                ),
-                TextButton(
-                  onPressed: downloading
-                      ? null
-                      : () async {
-                          setDialogState(() => downloading = true);
-                          try {
-                            final file = await AppUpdateService.instance.downloadApk(
-                              info,
-                              onProgress: (received, total) {
-                                if (total > 0) setDialogState(() => progress = received / total);
-                              },
-                            );
-                            final ok = await AppUpdateService.instance.installApk(file);
-                            if (ctx.mounted) Navigator.pop(ctx);
-                            if (!ok && mounted) {
-                              _showInfoDialog(context.l10n.updateAvailable, context.l10n.somethingWentWrong);
-                            }
-                          } catch (e) {
-                            if (ctx.mounted) Navigator.pop(ctx);
-                            if (mounted) {
-                              _showInfoDialog(context.l10n.updateAvailable, context.l10n.somethingWentWrong);
-                            }
-                          }
-                        },
-                  child: Text(context.l10n.update),
-                ),
-              ],
-            );
-          },
-        );
-      },
-    );
+    // Shared with the foreground nudge + update-notification tap.
+    showAppUpdateDialog(context, info);
   }
 
   @override
