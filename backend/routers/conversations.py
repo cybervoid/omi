@@ -63,6 +63,7 @@ from utils.conversations.search import (
     clamp_conversation_search_pagination,
     conversation_matches_date_range,
     conversation_matches_speaker,
+    delete_conversation_from_index,
     parse_exact_conversation_reference,
     search_conversations,
 )
@@ -925,6 +926,7 @@ def delete_conversation(
     conversations_db.delete_conversation(uid, conversation_id)
     delete_vector(uid, conversation_id)
     delete_transcript_chunk_vectors(uid, conversation_id)
+    delete_conversation_from_index(uid, conversation_id)
 
     return {"status": "Ok"}
 

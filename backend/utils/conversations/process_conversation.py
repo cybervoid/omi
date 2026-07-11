@@ -53,6 +53,9 @@ from models.conversation_enums import ConversationSource, ConversationStatus, Ex
 from utils.conversations.factory import deserialize_conversation
 from utils.conversations import lifecycle as lifecycle_service
 from utils.conversations.subjects import infer_subject_from_segments
+from utils.conversations.search import index_conversation
+from utils.memory.canonical_activation import canonical_write_enabled
+from utils.memory.memory_api_contract import MemoryApiExposure, memory_write_payload
 from utils.memory.memory_service import MemoryService
 from utils.memory.decision_path_telemetry import (
     classify_model_about,
@@ -2158,7 +2161,11 @@ def process_conversation(
                 asyncio.run(conversation_created_webhook(uid, conversation))
 
             submit_with_context(postprocess_executor, _run_webhook)
-
+    
+    # Keep the Typesense conversation search index in sync. The self-host has no
+    # Firebase->Typesense extension, so index in-process here (fail-open, off the
+    # request path). Covers new, reprocessed, and discarded conversations.
+    submit_with_context(postprocess_executor, index_conversation, uid, conversation)
     if defer_derived_effects:
         if derived_effects_observer is not None:
             derived_effects_observer(_emit_derived_effects)

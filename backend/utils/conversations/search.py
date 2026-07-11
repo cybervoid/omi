@@ -356,3 +356,134 @@ def keyword_search_conversation_ids(
 def merge_conversation_search_ids(keyword_ids: List[str], vector_ids: List[str]) -> List[str]:
     """Merge keyword and vector search results, keyword hits first (exact text matches), deduplicated."""
     return list(keyword_ids) + [cid for cid in vector_ids if cid not in keyword_ids]
+
+
+# ---------------------------------------------------------------------------
+# Typesense indexing (self-host)
+# ---------------------------------------------------------------------------
+# Upstream keeps this collection synced via a Firebase "firestore-typesense-search"
+# extension; the single-VM self-host has no such sync, so the backend indexes
+# in-process here. A one-off/cron reconcile lives in
+# backend/scripts/typesense_selfhost_indexer.py — keep the schema and document
+# shape below in sync with that script. All write helpers are FAIL-OPEN: a
+# Typesense outage must never break conversation processing or deletion.
+
+CONVERSATIONS_COLLECTION = 'conversations'
+
+CONVERSATIONS_SCHEMA = {
+    'name': CONVERSATIONS_COLLECTION,
+    'enable_nested_fields': True,
+    'fields': [
+        {'name': 'userId', 'type': 'string'},
+        {'name': 'created_at', 'type': 'int64'},
+        {'name': 'started_at', 'type': 'int64', 'optional': True},
+        {'name': 'finished_at', 'type': 'int64', 'optional': True},
+        {'name': 'discarded', 'type': 'bool', 'optional': True},
+        {'name': 'is_locked', 'type': 'bool', 'optional': True},
+        {'name': 'structured.title', 'type': 'string', 'optional': True},
+        {'name': 'structured.overview', 'type': 'string', 'optional': True},
+        # Declared so speaker-filtered searches don't error; not populated here.
+        {'name': 'transcript_segments.is_user', 'type': 'bool[]', 'optional': True},
+        {'name': 'transcript_segments.person_id', 'type': 'string[]', 'optional': True},
+        # Store remaining scalar fields so the app can render search results.
+        {'name': '.*', 'type': 'auto', 'optional': True},
+    ],
+}
+
+
+def _to_unix_ts(value) -> Optional[int]:
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return int(value)
+    if isinstance(value, str):
+        try:
+            return int(datetime.fromisoformat(value.replace('Z', '+00:00')).timestamp())
+        except ValueError:
+            return None
+    try:
+        return int(value.timestamp())
+    except (AttributeError, TypeError, ValueError, OSError):
+        return None
+
+
+def build_conversation_document(uid: str, conversation) -> Optional[Dict]:
+    """Curated, JSON-safe Typesense document for a conversation.
+
+    Accepts a Conversation model or a Firestore dict. Returns None when the
+    conversation has no id/created_at. Timestamps are stored as unix ints
+    (started_at/finished_at fall back to created_at so search_conversations never
+    skips a hit); transcript_segments are intentionally omitted (the app rejects
+    partial segments, and the speaker-filter fields stay optional so a
+    speaker-filtered search returns empty rather than erroring).
+    """
+    c = conversation.model_dump(mode='json') if hasattr(conversation, 'model_dump') else dict(conversation)
+    cid = c.get('id')
+    created = _to_unix_ts(c.get('created_at'))
+    if not cid or created is None:
+        return None
+
+    def _val(x):
+        return getattr(x, 'value', x)
+
+    s = c.get('structured') or {}
+    doc = {
+        'id': str(cid),
+        'userId': uid,
+        'created_at': created,
+        'started_at': _to_unix_ts(c.get('started_at')) or created,
+        'finished_at': _to_unix_ts(c.get('finished_at')) or created,
+        'discarded': bool(c.get('discarded', False)),
+        'is_locked': bool(c.get('is_locked', False)),
+        'starred': bool(c.get('starred', False)),
+        'source': _val(c.get('source')) or 'omi',
+        'status': _val(c.get('status')) or 'completed',
+        'visibility': _val(c.get('visibility')) or 'private',
+        'language': c.get('language'),
+        'folder_id': c.get('folder_id'),
+        'structured': {
+            'title': s.get('title') or '',
+            'overview': s.get('overview') or '',
+            'category': _val(s.get('category')) or 'other',
+            'emoji': s.get('emoji') or '',
+        },
+    }
+    return {k: v for k, v in doc.items() if v is not None}
+
+
+def ensure_conversations_collection() -> None:
+    """Create the conversations collection if it doesn't exist (fail-open)."""
+    try:
+        client.collections[CONVERSATIONS_COLLECTION].retrieve()
+        return
+    except Exception:
+        pass
+    try:
+        client.collections.create(CONVERSATIONS_SCHEMA)
+        logger.info("created Typesense collection '%s'", CONVERSATIONS_COLLECTION)
+    except Exception as e:
+        logger.info("ensure_conversations_collection: %s", e)
+
+
+def index_conversation(uid: str, conversation) -> None:
+    """Upsert one conversation into Typesense. Fail-open: never raises."""
+    try:
+        doc = build_conversation_document(uid, conversation)
+        if not doc:
+            return
+        try:
+            client.collections[CONVERSATIONS_COLLECTION].documents.upsert(doc)
+        except Exception:
+            # Collection may not exist yet (fresh Typesense). Create and retry once.
+            ensure_conversations_collection()
+            client.collections[CONVERSATIONS_COLLECTION].documents.upsert(doc)
+    except Exception as e:
+        logger.warning("index_conversation failed (uid=%s): %s", uid, e)
+
+
+def delete_conversation_from_index(uid: str, conversation_id: str) -> None:
+    """Remove one conversation from Typesense. Fail-open: never raises."""
+    try:
+        client.collections[CONVERSATIONS_COLLECTION].documents[str(conversation_id)].delete()
+    except Exception as e:
+        logger.warning("delete_conversation_from_index failed (uid=%s id=%s): %s", uid, conversation_id, e)
