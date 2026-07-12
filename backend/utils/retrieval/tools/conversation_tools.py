@@ -559,6 +559,35 @@ def search_conversations_tool(
             tz=notification_db.get_user_time_zone(uid) or 'UTC',
         )
 
+        # Surface the best verbatim transcript excerpts so the model has the exact spoken evidence
+        # even when full transcripts aren't loaded (max_transcript_segments defaults to 0). Text is
+        # hydrated from Firestore — never stored in Pinecone. These are framed as the STRONGEST
+        # evidence (no raw cosine score, which reads as low-confidence) because conversation
+        # titles/overviews routinely omit spoken details — names, brief mentions — that the user is
+        # searching for, and the model otherwise trusts the non-matching summaries and replies
+        # "not found". Fail-open.
+        if chunk_rows:
+            try:
+                hydrated = hydrate_chunk_texts(uid, chunk_rows[:MAX_TRANSCRIPT_EXCERPTS])
+                if hydrated:
+                    excerpts = [f'{i}. "{row["text"].strip()}"' for i, row in enumerate(hydrated, 1)]
+                    result += (
+                        "\n\nVERBATIM TRANSCRIPT MATCHES — these are exact words spoken in the user's "
+                        "recordings and are the STRONGEST evidence for this search. Conversation "
+                        "titles/overviews above omit spoken details (names, brief mentions), so rely on "
+                        "these quotes even when a conversation's summary does not mention the query "
+                        "terms, and cite the matching conversation instead of replying that nothing was "
+                        "found:\n" + "\n\n".join(excerpts)
+                    )
+            except Exception as e:
+                logger.warning(
+                    "search_conversations_tool excerpt hydration failed, continuing without excerpts: %s",
+                    type(e).__name__,
+                )
+
+        if len(result) > MAX_RESULT_CHARS:
+            result = result[:MAX_RESULT_CHARS]
+
         logger.info(f"🔍 search_conversations_tool - Generated result string, length: {len(result)}")
 
         return result

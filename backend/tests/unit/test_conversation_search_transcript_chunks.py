@@ -136,7 +136,7 @@ def test_transcript_chunk_ids_merged_and_excerpts_surfaced(monkeypatch):
     assert "chunk-conv" in captured["ids"]
     assert captured["ids"][:3] == ["kw-1", "chunk-conv", "vec-1"]
     # Verbatim excerpt is surfaced so the model sees the spoken evidence.
-    assert "Relevant verbatim transcript excerpts" in result
+    assert "VERBATIM TRANSCRIPT MATCHES" in result
     assert "lunch with Lisa" in result
 
 
@@ -154,4 +154,4 @@ def test_transcript_chunk_search_failure_fails_open(monkeypatch):
     # Must not raise; keyword + vector results still produce an answer, no excerpts section.
     result = conversation_tools.search_conversations_tool.func(query="lunch with Lisa", config=_config())
     assert "CONV_SUMMARIES" in result
-    assert "Relevant verbatim transcript excerpts" not in result
+    assert "VERBATIM TRANSCRIPT MATCHES" not in result
