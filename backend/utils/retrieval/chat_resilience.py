@@ -20,7 +20,7 @@ from typing import Any, Callable, List, Optional, Tuple
 import anthropic
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
-from utils.llm.providers import get_or_create_openai_compatible_llm
+from utils.llm.providers import OPENAI_COMPATIBLE_PROVIDERS, get_or_create_openai_compatible_llm
 from utils.retrieval.safety import AgentSafetyGuard, SafetyGuardError
 
 logger = logging.getLogger(__name__)
@@ -71,6 +71,18 @@ def fallback_chain() -> List[Tuple[str, str]]:
         if provider in SUPPORTED_FALLBACK_PROVIDERS and model:
             chain.append((provider, model))
     return chain
+
+
+def provider_has_credentials(provider: str) -> bool:
+    """True when the provider's configured API-key env var is set (non-empty).
+
+    Reads the authoritative env-var name from ``OPENAI_COMPATIBLE_PROVIDERS`` so this
+    check never drifts from how the provider client is actually built.
+    """
+    config = OPENAI_COMPATIBLE_PROVIDERS.get(provider)
+    if config is None:
+        return False
+    return bool(os.getenv(config.api_key_env, '').strip())
 
 
 def is_retryable_anthropic_error(e: Exception) -> bool:
@@ -301,6 +313,29 @@ async def run_openai_fallback_agent(
     if not chain:
         return False
 
+    # Only attempt providers whose API-key env var is actually set. Otherwise a
+    # misconfigured chain (e.g. the default lists OpenRouter first but only
+    # OPENAI_API_KEY is set) would burn a guaranteed-failing round-trip and surface a
+    # confusing generic error instead of a clear, actionable "no fallback" signal.
+    usable, skipped = [], []
+    for provider, model in chain:
+        (usable if provider_has_credentials(provider) else skipped).append((provider, model))
+    if skipped:
+        logger.info(
+            "chat_agent fallback skipping providers without credentials: %s",
+            sorted({p for p, _ in skipped}),
+        )
+    if not usable:
+        required_envs = sorted(
+            {OPENAI_COMPATIBLE_PROVIDERS[p].api_key_env for p, _ in chain if p in OPENAI_COMPATIBLE_PROVIDERS}
+        )
+        logger.error(
+            "chat_agent fallback unavailable: none of the configured providers have credentials. "
+            "Set one of %s, or set CHAT_AGENT_FALLBACK_CHAIN to a provider you have a key for.",
+            required_envs,
+        )
+        return False
+
     base_messages = [SystemMessage(content=system_prompt)] + anthropic_msgs_to_langchain(anthropic_messages)
     openai_tools = [langchain_tool_to_openai(t) for t in core_tools]
     try:
@@ -308,7 +343,7 @@ async def run_openai_fallback_agent(
     except (TypeError, ValueError):
         max_iters = 8
 
-    for provider, model in chain:
+    for provider, model in usable:
         try:
             llm = get_or_create_openai_compatible_llm(provider, model, streaming=False)
             llm_with_tools = llm.bind_tools(openai_tools)

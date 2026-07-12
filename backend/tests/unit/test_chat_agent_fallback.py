@@ -254,6 +254,16 @@ def test_retry_attempts_floor(monkeypatch):
     assert chat_resilience.retry_attempts() == 3  # falls back to default
 
 
+def test_provider_has_credentials(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    assert chat_resilience.provider_has_credentials("openai") is True
+    monkeypatch.setenv("OPENAI_API_KEY", "   ")  # whitespace-only counts as unset
+    assert chat_resilience.provider_has_credentials("openai") is False
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    assert chat_resilience.provider_has_credentials("openrouter") is False
+    assert chat_resilience.provider_has_credentials("bogus") is False  # unknown provider
+
+
 # --------------------------------------------------------------------------- #
 # circuit breaker (persistent rate-limiting)
 # --------------------------------------------------------------------------- #
@@ -400,6 +410,10 @@ def test_fallback_executes_tool_then_answers(monkeypatch):
 
 def test_fallback_advances_to_next_provider_on_error(monkeypatch):
     monkeypatch.setenv("CHAT_AGENT_FALLBACK_CHAIN", "openrouter:anthropic/claude-sonnet-4-6,openai:gpt-4.1")
+    # Both providers have credentials so openrouter is actually attempted (and fails at
+    # invoke), exercising advancement to the next provider rather than a credential-skip.
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
 
     def _factory(provider, model, streaming=False):
         if provider == "openrouter":
@@ -453,6 +467,79 @@ def test_fallback_returns_false_when_chain_empty(monkeypatch):
     )
 
     assert ok is False  # nothing usable in the chain -> caller emits generic error
+
+
+def test_fallback_skips_provider_without_credentials(monkeypatch):
+    # Default-style chain lists OpenRouter first, but only OPENAI_API_KEY is set:
+    # OpenRouter must be skipped (no wasted round-trip) and OpenAI answers.
+    monkeypatch.setenv("CHAT_AGENT_FALLBACK_CHAIN", "openrouter:anthropic/claude-sonnet-4-6,openai:gpt-4.1")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+
+    attempted = []
+
+    def _factory(provider, model, streaming=False):
+        attempted.append(provider)
+        return _FakeLLM([_FakeAI(content="openai answer")])
+
+    monkeypatch.setattr(chat_resilience, "get_or_create_openai_compatible_llm", _factory)
+
+    callback = agentic.AsyncStreamingCallback()
+    guard = agentic.AgentSafetyGuard(max_tool_calls=25, max_context_tokens=500000)
+    full_response = []
+
+    ok = asyncio.run(
+        chat_resilience.run_openai_fallback_agent(
+            "system",
+            [{"role": "user", "content": "hi"}],
+            {},
+            callback,
+            full_response,
+            guard,
+            {},
+            core_tools=[],
+            execute_tool=_noop_execute,
+            get_tool_display_name=_display_name,
+        )
+    )
+
+    assert ok is True
+    assert attempted == ["openai"]  # openrouter skipped for missing credentials
+    assert "".join(full_response) == "openai answer"
+
+
+def test_fallback_unavailable_when_no_credentials(monkeypatch):
+    # No configured provider has a key -> return False without constructing any client.
+    monkeypatch.setenv("CHAT_AGENT_FALLBACK_CHAIN", "openai:gpt-4.1,openrouter:anthropic/claude-sonnet-4-6")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+
+    def _factory(provider, model, streaming=False):
+        raise AssertionError("must not construct a provider client when no credentials are set")
+
+    monkeypatch.setattr(chat_resilience, "get_or_create_openai_compatible_llm", _factory)
+
+    callback = agentic.AsyncStreamingCallback()
+    guard = agentic.AgentSafetyGuard(max_tool_calls=25, max_context_tokens=500000)
+    full_response = []
+
+    ok = asyncio.run(
+        chat_resilience.run_openai_fallback_agent(
+            "system",
+            [{"role": "user", "content": "hi"}],
+            {},
+            callback,
+            full_response,
+            guard,
+            {},
+            core_tools=[],
+            execute_tool=_noop_execute,
+            get_tool_display_name=_display_name,
+        )
+    )
+
+    assert ok is False
+    assert full_response == []  # nothing streamed
 
 
 # --------------------------------------------------------------------------- #
