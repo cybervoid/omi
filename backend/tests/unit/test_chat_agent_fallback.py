@@ -1,9 +1,11 @@
-"""Unit tests for chat_agent 429 resilience: retry/backoff config + provider fallback.
+"""Unit tests for chat_agent 429 resilience.
 
-Covers the pure decision helpers in ``utils.retrieval.agentic`` (retryable-error
-classification, Retry-After-aware backoff, fallback-chain parsing, tool/message
-conversion) and the non-streaming provider fallback loop ``_run_openai_fallback_agent``
-driven by a fake OpenAI-compatible LLM. No network or real provider calls.
+Covers the self-host-owned ``utils.retrieval.chat_resilience`` module: pure decision
+helpers (retryable-error classification, Retry-After-aware backoff, fallback-chain
+parsing, tool/message conversion), the persistent-rate-limit circuit breaker, and the
+non-streaming provider fallback loop ``run_openai_fallback_agent`` driven by a fake
+OpenAI-compatible LLM. Also exercises the full ``agentic._run_anthropic_agent_stream``
+seam end-to-end for the post-tool-synthesis 429 case. No network or real provider calls.
 """
 
 import asyncio
@@ -11,6 +13,7 @@ import os
 
 import anthropic
 import httpx
+import pytest
 
 os.environ.setdefault(
     "ENCRYPTION_SECRET",
@@ -25,7 +28,19 @@ os.environ.setdefault("TYPESENSE_HOST_PORT", "8108")
 
 # Imported for real — tests/conftest.py makes this hermetic (fake OPENAI_API_KEY,
 # stubbed tiktoken, blocked outbound network). No module-scope sys.modules mutation.
+# The resilience logic now lives in `chat_resilience`; `agentic` is still exercised for
+# the full-loop seam test.
 from utils.retrieval import agentic
+from utils.retrieval import chat_resilience
+
+
+@pytest.fixture(autouse=True)
+def _reset_circuit_breaker():
+    """Isolate the process-global breaker between tests (a success fully resets it)."""
+    chat_resilience.record_anthropic_success()
+    yield
+    chat_resilience.record_anthropic_success()
+
 
 # --------------------------------------------------------------------------- #
 # Test doubles
@@ -97,6 +112,16 @@ class _StubTool:
     args_schema = _StubToolSchema
 
 
+def _display_name(name, tool_obj=None):
+    """Injected get_tool_display_name stub (agentic owns the real one)."""
+    return name
+
+
+async def _noop_execute(name, args, registry, configurable):
+    """Injected execute_tool stub for fallback tests that never invoke a tool."""
+    return "UNUSED"
+
+
 def _drain(callback):
     items = []
     while not callback.queue.empty():
@@ -127,25 +152,34 @@ def _anthropic_connection_error():
 
 
 # --------------------------------------------------------------------------- #
-# is_retryable classification
+# is_retryable / is_rate_limit classification
 # --------------------------------------------------------------------------- #
 
 
 def test_rate_limit_error_is_retryable():
-    assert agentic._is_retryable_anthropic_error(_anthropic_rate_limit_error()) is True
+    assert chat_resilience.is_retryable_anthropic_error(_anthropic_rate_limit_error()) is True
 
 
 def test_connection_error_is_retryable():
-    assert agentic._is_retryable_anthropic_error(_anthropic_connection_error()) is True
+    assert chat_resilience.is_retryable_anthropic_error(_anthropic_connection_error()) is True
 
 
 def test_status_error_retryable_only_for_transient_codes():
-    assert agentic._is_retryable_anthropic_error(_anthropic_status_error(503)) is True
-    assert agentic._is_retryable_anthropic_error(_anthropic_status_error(400)) is False
+    assert chat_resilience.is_retryable_anthropic_error(_anthropic_status_error(503)) is True
+    assert chat_resilience.is_retryable_anthropic_error(_anthropic_status_error(400)) is False
 
 
 def test_non_anthropic_error_is_not_retryable():
-    assert agentic._is_retryable_anthropic_error(ValueError("nope")) is False
+    assert chat_resilience.is_retryable_anthropic_error(ValueError("nope")) is False
+
+
+def test_is_rate_limit_error_only_for_429_529():
+    # Drives the circuit breaker: only genuine rate-limit/overload counts, not other 5xx.
+    assert chat_resilience.is_rate_limit_error(_anthropic_rate_limit_error()) is True
+    assert chat_resilience.is_rate_limit_error(_anthropic_status_error(529)) is True
+    assert chat_resilience.is_rate_limit_error(_anthropic_status_error(503)) is False
+    assert chat_resilience.is_rate_limit_error(_anthropic_connection_error()) is False
+    assert chat_resilience.is_rate_limit_error(ValueError("nope")) is False
 
 
 # --------------------------------------------------------------------------- #
@@ -154,41 +188,41 @@ def test_non_anthropic_error_is_not_retryable():
 
 
 def test_retry_after_seconds_header():
-    assert agentic._retry_after_seconds(_FakeHeaderError({"retry-after": "2"})) == 2.0
+    assert chat_resilience.retry_after_seconds(_FakeHeaderError({"retry-after": "2"})) == 2.0
 
 
 def test_retry_after_ms_header():
-    assert agentic._retry_after_seconds(_FakeHeaderError({"retry-after-ms": "1500"})) == 1.5
+    assert chat_resilience.retry_after_seconds(_FakeHeaderError({"retry-after-ms": "1500"})) == 1.5
 
 
 def test_retry_after_absent_returns_none():
-    assert agentic._retry_after_seconds(_FakeHeaderError({})) is None
-    assert agentic._retry_after_seconds(ValueError("no response attr")) is None
+    assert chat_resilience.retry_after_seconds(_FakeHeaderError({})) is None
+    assert chat_resilience.retry_after_seconds(ValueError("no response attr")) is None
 
 
 def test_backoff_prefers_retry_after_capped():
     # Honors the server value, capped at the module max.
-    assert agentic._backoff_delay(1, _FakeHeaderError({"retry-after": "2"})) == 2.0
-    big = agentic._backoff_delay(1, _FakeHeaderError({"retry-after": "9999"}))
-    assert big == agentic._CHAT_AGENT_MAX_BACKOFF_SECONDS
+    assert chat_resilience.backoff_delay(1, _FakeHeaderError({"retry-after": "2"})) == 2.0
+    big = chat_resilience.backoff_delay(1, _FakeHeaderError({"retry-after": "9999"}))
+    assert big == chat_resilience.MAX_BACKOFF_SECONDS
 
 
 def test_backoff_exponential_with_jitter_bounds():
     # No Retry-After header -> exponential base 0.5 * 2**(attempt-1) plus [0, 0.5) jitter.
-    d1 = agentic._backoff_delay(1, _FakeHeaderError({}))
+    d1 = chat_resilience.backoff_delay(1, _FakeHeaderError({}))
     assert 0.5 <= d1 < 1.0
-    d3 = agentic._backoff_delay(3, _FakeHeaderError({}))
+    d3 = chat_resilience.backoff_delay(3, _FakeHeaderError({}))
     assert 2.0 <= d3 < 2.5
 
 
 # --------------------------------------------------------------------------- #
-# fallback chain parsing
+# fallback chain parsing / config
 # --------------------------------------------------------------------------- #
 
 
 def test_fallback_chain_default(monkeypatch):
     monkeypatch.delenv("CHAT_AGENT_FALLBACK_CHAIN", raising=False)
-    assert agentic._fallback_chain() == [
+    assert chat_resilience.fallback_chain() == [
         ("openrouter", "anthropic/claude-sonnet-4-6"),
         ("openai", "gpt-4.1"),
     ]
@@ -200,7 +234,7 @@ def test_fallback_chain_custom_and_filtering(monkeypatch):
         "CHAT_AGENT_FALLBACK_CHAIN",
         "openai:gpt-4.1 , bogusprovider:x, openrouter:anthropic/claude-sonnet-4-6, noseparator",
     )
-    assert agentic._fallback_chain() == [
+    assert chat_resilience.fallback_chain() == [
         ("openai", "gpt-4.1"),
         ("openrouter", "anthropic/claude-sonnet-4-6"),
     ]
@@ -208,16 +242,46 @@ def test_fallback_chain_custom_and_filtering(monkeypatch):
 
 def test_fallback_enabled_toggle(monkeypatch):
     monkeypatch.delenv("CHAT_AGENT_FALLBACK_ENABLED", raising=False)
-    assert agentic._fallback_enabled() is True
+    assert chat_resilience.fallback_enabled() is True
     monkeypatch.setenv("CHAT_AGENT_FALLBACK_ENABLED", "false")
-    assert agentic._fallback_enabled() is False
+    assert chat_resilience.fallback_enabled() is False
 
 
 def test_retry_attempts_floor(monkeypatch):
     monkeypatch.setenv("CHAT_AGENT_RETRY_ATTEMPTS", "0")
-    assert agentic._chat_agent_retry_attempts() == 1  # clamped to >= 1
+    assert chat_resilience.retry_attempts() == 1  # clamped to >= 1
     monkeypatch.setenv("CHAT_AGENT_RETRY_ATTEMPTS", "notint")
-    assert agentic._chat_agent_retry_attempts() == 3  # falls back to default
+    assert chat_resilience.retry_attempts() == 3  # falls back to default
+
+
+# --------------------------------------------------------------------------- #
+# circuit breaker (persistent rate-limiting)
+# --------------------------------------------------------------------------- #
+
+
+def test_circuit_breaker_trips_after_threshold_and_resets(monkeypatch):
+    monkeypatch.setenv("CHAT_AGENT_ANTHROPIC_TRIP_THRESHOLD", "2")
+    monkeypatch.setenv("CHAT_AGENT_ANTHROPIC_COOLDOWN_SECONDS", "60")
+    chat_resilience.record_anthropic_success()  # clean slate (autouse fixture also resets)
+
+    assert chat_resilience.should_skip_anthropic() is False
+    chat_resilience.record_anthropic_rate_limit()
+    assert chat_resilience.should_skip_anthropic() is False  # one short of threshold
+    chat_resilience.record_anthropic_rate_limit()
+    assert chat_resilience.should_skip_anthropic() is True  # threshold reached -> tripped
+
+    chat_resilience.record_anthropic_success()  # any success clears it
+    assert chat_resilience.should_skip_anthropic() is False
+
+
+def test_circuit_breaker_cooldown_expires(monkeypatch):
+    monkeypatch.setenv("CHAT_AGENT_ANTHROPIC_TRIP_THRESHOLD", "1")
+    monkeypatch.setenv("CHAT_AGENT_ANTHROPIC_COOLDOWN_SECONDS", "0")
+    chat_resilience.record_anthropic_success()
+
+    chat_resilience.record_anthropic_rate_limit()  # trips immediately (threshold 1)
+    # cooldown 0 -> skip_until == now, so the window has already elapsed by the check.
+    assert chat_resilience.should_skip_anthropic() is False
 
 
 # --------------------------------------------------------------------------- #
@@ -226,13 +290,13 @@ def test_retry_attempts_floor(monkeypatch):
 
 
 def test_coerce_text_variants():
-    assert agentic._coerce_text("hi") == "hi"
-    assert agentic._coerce_text([{"type": "text", "text": "a"}, "b", {"type": "image"}]) == "ab"
-    assert agentic._coerce_text(None) == ""
+    assert chat_resilience.coerce_text("hi") == "hi"
+    assert chat_resilience.coerce_text([{"type": "text", "text": "a"}, "b", {"type": "image"}]) == "ab"
+    assert chat_resilience.coerce_text(None) == ""
 
 
 def test_anthropic_msgs_to_langchain_roles():
-    out = agentic._anthropic_msgs_to_langchain(
+    out = chat_resilience.anthropic_msgs_to_langchain(
         [{"role": "user", "content": "hello"}, {"role": "assistant", "content": "hi there"}]
     )
     assert [type(m).__name__ for m in out] == ["HumanMessage", "AIMessage"]
@@ -240,7 +304,7 @@ def test_anthropic_msgs_to_langchain_roles():
 
 
 def test_langchain_tool_to_openai_strips_config_and_title():
-    spec = agentic._langchain_tool_to_openai(_StubTool)
+    spec = chat_resilience.langchain_tool_to_openai(_StubTool)
     assert spec["type"] == "function"
     fn = spec["function"]
     assert fn["name"] == "demo_tool"
@@ -260,7 +324,7 @@ def test_langchain_tool_to_openai_strips_config_and_title():
 def test_fallback_no_tool_calls_streams_answer(monkeypatch):
     monkeypatch.setenv("CHAT_AGENT_FALLBACK_CHAIN", "openai:gpt-4.1")
     monkeypatch.setattr(
-        agentic,
+        chat_resilience,
         "get_or_create_openai_compatible_llm",
         lambda provider, model, streaming=False: _FakeLLM([_FakeAI(content="Hello from fallback")]),
     )
@@ -270,8 +334,17 @@ def test_fallback_no_tool_calls_streams_answer(monkeypatch):
     full_response = []
 
     ok = asyncio.run(
-        agentic._run_openai_fallback_agent(
-            "system", [{"role": "user", "content": "hi"}], {}, callback, full_response, guard, {}
+        chat_resilience.run_openai_fallback_agent(
+            "system",
+            [{"role": "user", "content": "hi"}],
+            {},
+            callback,
+            full_response,
+            guard,
+            {},
+            core_tools=[],
+            execute_tool=_noop_execute,
+            get_tool_display_name=_display_name,
         )
     )
 
@@ -285,7 +358,7 @@ def test_fallback_no_tool_calls_streams_answer(monkeypatch):
 def test_fallback_executes_tool_then_answers(monkeypatch):
     monkeypatch.setenv("CHAT_AGENT_FALLBACK_CHAIN", "openai:gpt-4.1")
     monkeypatch.setattr(
-        agentic,
+        chat_resilience,
         "get_or_create_openai_compatible_llm",
         lambda provider, model, streaming=False: _FakeLLM(
             [
@@ -301,15 +374,22 @@ def test_fallback_executes_tool_then_answers(monkeypatch):
         executed.append((name, args))
         return "TOOL_RESULT"
 
-    monkeypatch.setattr(agentic, "_execute_tool", _fake_execute)
-
     callback = agentic.AsyncStreamingCallback()
     guard = agentic.AgentSafetyGuard(max_tool_calls=25, max_context_tokens=500000)
     full_response = []
 
     ok = asyncio.run(
-        agentic._run_openai_fallback_agent(
-            "system", [{"role": "user", "content": "do it"}], {}, callback, full_response, guard, {}
+        chat_resilience.run_openai_fallback_agent(
+            "system",
+            [{"role": "user", "content": "do it"}],
+            {},
+            callback,
+            full_response,
+            guard,
+            {},
+            core_tools=[],
+            execute_tool=_fake_execute,
+            get_tool_display_name=_display_name,
         )
     )
 
@@ -326,15 +406,24 @@ def test_fallback_advances_to_next_provider_on_error(monkeypatch):
             return _RaisingLLM()
         return _FakeLLM([_FakeAI(content="second provider answer")])
 
-    monkeypatch.setattr(agentic, "get_or_create_openai_compatible_llm", _factory)
+    monkeypatch.setattr(chat_resilience, "get_or_create_openai_compatible_llm", _factory)
 
     callback = agentic.AsyncStreamingCallback()
     guard = agentic.AgentSafetyGuard(max_tool_calls=25, max_context_tokens=500000)
     full_response = []
 
     ok = asyncio.run(
-        agentic._run_openai_fallback_agent(
-            "system", [{"role": "user", "content": "hi"}], {}, callback, full_response, guard, {}
+        chat_resilience.run_openai_fallback_agent(
+            "system",
+            [{"role": "user", "content": "hi"}],
+            {},
+            callback,
+            full_response,
+            guard,
+            {},
+            core_tools=[],
+            execute_tool=_noop_execute,
+            get_tool_display_name=_display_name,
         )
     )
 
@@ -349,7 +438,18 @@ def test_fallback_returns_false_when_chain_empty(monkeypatch):
     guard = agentic.AgentSafetyGuard(max_tool_calls=25, max_context_tokens=500000)
 
     ok = asyncio.run(
-        agentic._run_openai_fallback_agent("system", [{"role": "user", "content": "hi"}], {}, callback, [], guard, {})
+        chat_resilience.run_openai_fallback_agent(
+            "system",
+            [{"role": "user", "content": "hi"}],
+            {},
+            callback,
+            [],
+            guard,
+            {},
+            core_tools=[],
+            execute_tool=_noop_execute,
+            get_tool_display_name=_display_name,
+        )
     )
 
     assert ok is False  # nothing usable in the chain -> caller emits generic error
@@ -439,8 +539,10 @@ def test_post_tool_synthesis_429_falls_back_and_answers(monkeypatch):
         ]
     )
     monkeypatch.setattr(agentic, "anthropic_client", fake_client)
+    # The fallback provider lives in chat_resilience now; agentic injects CORE_TOOLS /
+    # _execute_tool / get_tool_display_name into it, so patch the LLM factory there.
     monkeypatch.setattr(
-        agentic,
+        chat_resilience,
         "get_or_create_openai_compatible_llm",
         lambda provider, model, streaming=False: _FakeLLM([_FakeAI(content="FALLBACK_SYNTHESIS_OK")]),
     )
@@ -448,6 +550,7 @@ def test_post_tool_synthesis_429_falls_back_and_answers(monkeypatch):
     async def _fake_execute(name, args, registry, configurable):
         return "TOOL_RESULT: found 2 conversations"
 
+    # Injected via the seam by reference to agentic's module global -> patch it here.
     monkeypatch.setattr(agentic, "_execute_tool", _fake_execute)
 
     callback = agentic.AsyncStreamingCallback()
