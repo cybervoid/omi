@@ -561,23 +561,37 @@ def search_conversations_tool(
 
         # Surface the best verbatim transcript excerpts so the model has the exact spoken evidence
         # even when full transcripts aren't loaded (max_transcript_segments defaults to 0). Text is
-        # hydrated from Firestore — never stored in Pinecone. These are framed as the STRONGEST
-        # evidence (no raw cosine score, which reads as low-confidence) because conversation
-        # titles/overviews routinely omit spoken details — names, brief mentions — that the user is
-        # searching for, and the model otherwise trusts the non-matching summaries and replies
-        # "not found". Fail-open.
+        # hydrated from Firestore — never stored in Pinecone. Each excerpt is tied back to its
+        # "Conversation #N" above so the model can (a) see when several quotes come from the SAME
+        # conversation and (b) cite it with [N]. Without this the quotes float free — their embedded
+        # UTC date header doesn't line up with the user-timezone conversation list — so the model
+        # treats lunch and a name mention as unrelated, dismisses the match, and cites nothing.
+        # Fail-open.
         if chunk_rows:
             try:
                 hydrated = hydrate_chunk_texts(uid, chunk_rows[:MAX_TRANSCRIPT_EXCERPTS])
                 if hydrated:
-                    excerpts = [f'{i}. "{row["text"].strip()}"' for i, row in enumerate(hydrated, 1)]
+                    number_by_id = {c.id: i + 1 for i, c in enumerate(conversations)}
+                    excerpts = []
+                    for row in hydrated:
+                        n = number_by_id.get(row.get('conversation_id'))
+                        # Drop the embedded "[Conversation on <UTC>]" header line; we attribute via
+                        # #N, whose date/time is already shown above in the user's timezone.
+                        text = row['text'].strip()
+                        if text.startswith('[Conversation on '):
+                            nl = text.find('\n')
+                            text = text[nl + 1 :].strip() if nl != -1 else text
+                        label = f"From Conversation #{n}" if n else "From a matched conversation above"
+                        excerpts.append(f'{label}:\n"{text}"')
                     result += (
-                        "\n\nVERBATIM TRANSCRIPT MATCHES — these are exact words spoken in the user's "
-                        "recordings and are the STRONGEST evidence for this search. Conversation "
-                        "titles/overviews above omit spoken details (names, brief mentions), so rely on "
-                        "these quotes even when a conversation's summary does not mention the query "
-                        "terms, and cite the matching conversation instead of replying that nothing was "
-                        "found:\n" + "\n\n".join(excerpts)
+                        "\n\nVERBATIM TRANSCRIPT MATCHES — exact words spoken in the user's recordings and "
+                        "the STRONGEST evidence for this search. A conversation's title/overview often "
+                        "omits spoken details (names, one-off mentions), so a conversation IS a match even "
+                        "when its summary does not mention the query terms. Treat these quotes as "
+                        "authoritative: surface the conversation to the user and cite it by its number "
+                        "(e.g. [N]) instead of saying nothing was found. Several quotes may come from the "
+                        "same conversation — together they describe one recording, so do not dismiss it as "
+                        "unrelated:\n" + "\n\n".join(excerpts)
                     )
             except Exception as e:
                 logger.warning(

@@ -138,6 +138,8 @@ def test_transcript_chunk_ids_merged_and_excerpts_surfaced(monkeypatch):
     # Verbatim excerpt is surfaced so the model sees the spoken evidence.
     assert "VERBATIM TRANSCRIPT MATCHES" in result
     assert "lunch with Lisa" in result
+    # ...and is attributed to its listed conversation (chunk-conv is #2) so the model can cite [2].
+    assert "From Conversation #2:" in result
 
 
 def test_transcript_chunk_search_failure_fails_open(monkeypatch):
