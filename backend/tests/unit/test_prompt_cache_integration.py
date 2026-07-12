@@ -212,6 +212,24 @@ langchain_runnables_mod.RunnableConfig = dict
 langchain_callbacks_mod = _stub_module("langchain_core.callbacks")
 langchain_callbacks_mod.BaseCallbackHandler = type("BaseCallbackHandler", (), {})
 
+# agentic.py imports these message classes at module scope (used by the provider-fallback
+# path). Provide lightweight stand-ins so importing the real module succeeds; these tests
+# only build prompts / inspect CORE_TOOLS and never construct or use them.
+langchain_messages_mod = _stub_module("langchain_core.messages")
+
+
+class _StubMessage:
+    def __init__(self, content="", **kwargs):
+        self.content = content
+        for _k, _v in kwargs.items():
+            setattr(self, _k, _v)
+
+
+langchain_messages_mod.AIMessage = type("AIMessage", (_StubMessage,), {})
+langchain_messages_mod.HumanMessage = type("HumanMessage", (_StubMessage,), {})
+langchain_messages_mod.SystemMessage = type("SystemMessage", (_StubMessage,), {})
+langchain_messages_mod.ToolMessage = type("ToolMessage", (_StubMessage,), {})
+
 # --- LLMs/memory stubs ---
 llms_mod = _stub_module("utils.llms")
 if not hasattr(llms_mod, "__path__"):
