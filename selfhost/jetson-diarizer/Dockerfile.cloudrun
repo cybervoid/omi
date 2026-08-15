@@ -8,8 +8,8 @@ WORKDIR /app
 
 COPY requirements.txt /app/
 
-# Install the dependencies. We omit constraints.txt because it pinned Jetson-specific torch versions.
-RUN pip install --no-cache-dir torch torchaudio torchvision --index-url https://download.pytorch.org/whl/cpu && \
+# Install the exact same torch versions that the Jetson used to guarantee pyannote compatibility
+RUN pip install --no-cache-dir torch==2.7.0 torchaudio==2.7.0 torchvision==0.22.0 --index-url https://download.pytorch.org/whl/cpu && \
     pip install --no-cache-dir -r requirements.txt
 
 COPY embedding.py main.py /app/
