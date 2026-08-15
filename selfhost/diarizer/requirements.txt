@@ -1,5 +1,5 @@
 # torch/torchaudio/torchvision are provided by the base image (pinned in constraints.txt).
-# pyannote.audio 4.x hard-pins torch==2.8.0; the Jetson base is torch 2.7.0, so use 3.x
+# pyannote.audio 4.x hard-pins torch==2.8.0; the Base is torch 2.7.0, so use 3.x
 # (loose torch pin, same `pyannote/wespeaker-voxceleb-resnet34-LM` model + Model/Inference API).
 pyannote.audio>=3.1,<4
 # pyannote 3.x calls hf_hub_download(use_auth_token=...), which huggingface_hub 1.0 removed.

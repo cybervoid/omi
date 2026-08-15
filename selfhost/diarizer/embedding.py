@@ -1,4 +1,4 @@
-"""Speaker embedding (v2 / wespeaker) for the Jetson-hosted diarizer.
+"""Speaker embedding (v2 / wespeaker) for the Cloud Run diarizer.
 
 Faithful port of the /v2/embedding path from backend/diarizer/embedding.py so the
 embeddings are produced by the SAME model (pyannote/wespeaker-voxceleb-resnet34-LM)

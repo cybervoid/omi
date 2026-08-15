@@ -1,4 +1,4 @@
-"""Minimal diarizer service for the Jetson: only the /v2/embedding endpoint the
+"""Minimal diarizer service for Cloud Run: only the /v2/embedding endpoint the
 Omi backend calls (via HOSTED_SPEAKER_EMBEDDING_API_URL), plus a health check."""
 
 import logging
