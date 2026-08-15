@@ -105,7 +105,7 @@ connectivity and exercises patch 0002); and no errors in recent backend logs.
 ### Latest run — 2026-07-05 (post upstream rebase → `1.0.542`)
 All checks **passed** on `ghcr.io/cybervoid/omi-backend:latest` after rebasing the self-host patches onto upstream `b61b0141` (app `1.0.542`, versionCode 978). One missing Firestore index surfaced and was fixed (last bullet).
 - Public: `/docs` 200, `/openapi.json` 200 (**371 routes**), `/v1/conversations` 401, `/v1/conversations/count` 401, `/v2/app/android/latest` 401.
-- Redis `PONG`; pusher `Application startup complete`; Diarizer `/health` → `{"status":"healthy"}` over Tailscale.
+- Redis `PONG`; pusher `Application startup complete`; Diarizer `/health` → `{"status":"healthy"}` via Cloud Run.
 - Firestore reachable — finalizer dry-run: `Sweep start: users=2 …` → `Sweep done: scanned=0 finalized=0` (patch **0002**).
 - App-update pipeline end-to-end: a device auto-updated `1.0.538+906` → `1.0.542+978` (patch **0003** feed).
 - Patches verified: **0001** SignBlob loads clean, **0002** finalizer dry-run, **0003** feed serves 978.
