@@ -1,0 +1,22 @@
+FROM python:3.11-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libsndfile1 ffmpeg \
+ && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY requirements.txt /app/
+
+# Install the dependencies. We omit constraints.txt because it pinned Jetson-specific torch versions.
+RUN pip install --no-cache-dir torch torchaudio torchvision --index-url https://download.pytorch.org/whl/cpu && \
+    pip install --no-cache-dir -r requirements.txt
+
+COPY embedding.py main.py /app/
+
+ENV HF_HOME=/app/.hf
+ENV MIN_EMBEDDING_AUDIO_DURATION=0.5
+ENV CUDA_VISIBLE_DEVICES=""
+
+EXPOSE 8080
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080"]
