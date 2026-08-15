@@ -15,12 +15,12 @@ changes as commits on top of a pinned upstream baseline.
   - GCS V4 signed URLs via IAM **SignBlob**, so audio playback works on a **keyless** GCE VM (attached service account, no exported JSON key).
   - A **stale-conversation finalizer** (`backend/scripts/finalize_stale_conversations.py`), run from cron to close conversations stuck in `in_progress`.
   - An **app-update feed** (`backend/routers/app_update.py`): auth-gated `GET /v2/app/android/latest` + `/v2/app/android/download` that serve the self-host APK + metadata to the in-app updater (no embedded secrets).
-- **`selfhost/jetson-diarizer/`** — an aarch64 speaker-embedding service for a Jetson that replaces Omi's hosted `diarizer`. See [`jetson-diarizer/README.md`](jetson-diarizer/README.md).
+- **`selfhost/diarizer/`** — a serverless speaker-embedding service deployed to GCP Cloud Run that replaces Omi's hosted `diarizer`. See [`diarizer/README.md`](diarizer/README.md).
 - **`.github/workflows/`** — CI that builds the backend image and watches upstream (below).
 
 ## Architecture
 One backend image runs two services (`backend` and `pusher`); Redis and Caddy (TLS) complete the VM
-stack. Speaker embeddings are offloaded to a Jetson over a private Tailscale mesh. Persistent data
+stack. Speaker embeddings are offloaded to a serverless Cloud Run instance. Persistent data
 lives in Firestore/GCS (Firebase). CI publishes the image to GHCR and the VM pulls it.
 
 ```mermaid
@@ -31,7 +31,7 @@ flowchart LR
   backend --> redis[("Redis")]
   pusher --> redis
   backend -->|Firestore / GCS| fb[("Firebase")]
-  backend -->|"/v2/embedding over Tailscale"| diar["Jetson diarizer"]
+  backend -->|"/v2/embedding via HTTPS"| diar["Cloud Run diarizer"]
   build["GitHub Actions: build-backend"] -->|push image| ghcr[("GHCR: omi-backend")]
   ghcr -->|VM pulls| backend
 ```
@@ -99,7 +99,7 @@ $DC logs pusher 2>&1 | grep "Application startup complete"     # pusher booted
 $DC exec -T backend python -m scripts.finalize_stale_conversations --dry-run   # Firestore + patch 0002
 $DC logs --since 10m backend 2>&1 | grep -iE "error|traceback" || echo "no errors"
 ```
-Expect: Redis `PONG`; the diarizer `/health` healthy (Jetson reachable over Tailscale); the pusher
+Expect: Redis `PONG`; the diarizer `/health` healthy (Cloud Run reachable); the pusher
 startup line present; the finalizer printing `Sweep start … / Sweep done …` (proves Firestore
 connectivity and exercises patch 0002); and no errors in recent backend logs.
 ### Latest run — 2026-07-05 (post upstream rebase → `1.0.542`)
@@ -124,9 +124,9 @@ After it deploys, re-verify with the **Smoke test** section above (it covers the
 the finalizer `--dry-run`, and the diarizer round-trip). Watch for new required env keys and new
 Firestore composite indexes.
 
-### Jetson diarizer
+### Cloud Run diarizer
 Independent of upstream (it only mirrors the `/v2/embedding` contract). See
-[`jetson-diarizer/README.md`](jetson-diarizer/README.md); only revisit it if upstream changes that
+[`diarizer/README.md`](diarizer/README.md); only revisit it if upstream changes that
 contract.
 
 ### Roll back

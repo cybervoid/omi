@@ -4,7 +4,7 @@ on:
   push:
     branches: [ selfhost ]
     paths:
-      - 'selfhost/jetson-diarizer/**'
+      - 'selfhost/diarizer/**'
       - '.github/workflows/build-diarizer.yml'
   workflow_dispatch:
 
@@ -36,8 +36,8 @@ jobs:
       - name: Build and push diarizer image
         uses: docker/build-push-action@v6
         with:
-          context: selfhost/jetson-diarizer
-          file: selfhost/jetson-diarizer/Dockerfile.cloudrun
+          context: selfhost/diarizer
+          file: selfhost/diarizer/Dockerfile.cloudrun
           platforms: linux/amd64
           push: true
           tags: |
