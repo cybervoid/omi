@@ -73,10 +73,11 @@ for _name, _attrs in {
     "utils.conversations.render": ["conversations_to_string"],
     "utils.conversations.search": [
         "keyword_search_conversation_ids",
-        "merge_conversation_search_ids",
+        "interleave_conversation_search_ids",
         "parse_exact_conversation_reference",
         "conversation_matches_date_range",
     ],
+    "utils.conversations.transcript_chunks": ["hydrate_chunk_texts"],
     "utils.llm.clients": ["embeddings"],
     "utils.retrieval.agentic": ["agent_config_context"],
 }.items():

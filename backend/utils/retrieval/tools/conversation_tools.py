@@ -18,10 +18,11 @@ from utils.conversations.factory import deserialize_conversation
 from utils.conversations.render import conversations_to_string
 from utils.conversations.search import (
     conversation_matches_date_range,
+    interleave_conversation_search_ids,
     keyword_search_conversation_ids,
-    merge_conversation_search_ids,
     parse_exact_conversation_reference,
 )
+from utils.conversations.transcript_chunks import hydrate_chunk_texts
 import logging
 
 logger = logging.getLogger(__name__)
@@ -47,6 +48,9 @@ def _agent_config() -> Optional[Dict[str, Any]]:
 # information to process at once" (#4927). Bound both the count and the raw size of what we return.
 MAX_CONVERSATIONS_FOR_LLM = 100
 MAX_RESULT_CHARS = 60000
+# Verbatim transcript-chunk excerpts surfaced alongside search results so the chat model sees the
+# exact spoken evidence (names, numbers) that conversation summaries omit; bounded to control context.
+MAX_TRANSCRIPT_EXCERPTS = 5
 
 
 def _cap_conversations_for_llm(conversations: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], int, bool]:
@@ -442,21 +446,50 @@ def search_conversations_tool(
     try:
         keyword_ids: List[str] = []
         vector_ids: List[str] = []
+        chunk_rows: List[Dict[str, Any]] = []
+        chunk_ids: List[str] = []
         if exact_conversation_id:
             conversation_ids = [exact_conversation_id]
         else:
-            # Hybrid search: keyword (Typesense, exact matches on title/overview — catches proper
-            # names that embeddings miss, see #5072) + semantic vector search, keyword hits first.
+            # Hybrid search over three layers, round-robin merged so each layer's top hits survive
+            # the `limit` cap below:
+            #   1. keyword (Typesense) — exact title/overview matches, catches proper names
+            #      embeddings miss (see #5072)
+            #   2. transcript chunks (Pinecone ns_tchunks) — verbatim transcript; finds spoken-only
+            #      details (names, numbers, one-off mentions) the summary-only layers miss
+            #   3. vector (Pinecone ns1) — semantic match on the conversation summary
             keyword_ids = keyword_search_conversation_ids(
                 uid=uid, query=query, limit=limit, start_date=starts_at, end_date=ends_at
             )
+
+            # Transcript-chunk layer. Chunks cluster per conversation, so over-fetch then de-dupe to
+            # distinct conversation ids (ordered by best-scoring chunk). Fail-open: a chunk-search
+            # error must never break the whole search.
+            try:
+                chunk_rows = vector_db.search_transcript_chunks(
+                    uid, query, limit=max(limit * 4, 20), starts_at=starts_at, ends_at=ends_at
+                )
+                seen_chunk_ids = set()
+                for row in chunk_rows:
+                    cid = row.get('conversation_id')
+                    if cid and cid not in seen_chunk_ids:
+                        seen_chunk_ids.add(cid)
+                        chunk_ids.append(cid)
+                chunk_ids = chunk_ids[:limit]
+            except Exception as e:
+                logger.warning(
+                    "search_conversations_tool transcript-chunk search failed, continuing without it: %s",
+                    type(e).__name__,
+                )
+
             vector_ids = vector_db.query_vectors(query=query, uid=uid, starts_at=starts_at, ends_at=ends_at, k=limit)
-            conversation_ids = merge_conversation_search_ids(keyword_ids, vector_ids)
+            conversation_ids = interleave_conversation_search_ids(keyword_ids, chunk_ids, vector_ids)[:limit]
 
         logger.info(
-            "📊 search_conversations_tool - found %s results (%s keyword, %s vector) query_mode=%s",
+            "📊 search_conversations_tool - found %s results (%s keyword, %s transcript-chunk, %s vector) query_mode=%s",
             len(conversation_ids),
             len(keyword_ids),
+            len(chunk_ids),
             len(vector_ids),
             'exact-reference' if exact_conversation_id else 'semantic',
         )

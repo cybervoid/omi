@@ -207,4 +207,9 @@ class TestCallSitesUseHybridSearch:
     def test_call_site_merges_keyword_and_vector(self, rel_path):
         source = (BACKEND_DIR / rel_path).read_text(encoding='utf-8')
         assert 'keyword_search_conversation_ids(' in source, f'{rel_path} lost the keyword search half of #5072'
-        assert 'merge_conversation_search_ids(' in source, f'{rel_path} lost the hybrid merge of #5072'
+        # conversation_tools.py's search_conversations_tool additionally interleaves a
+        # transcript-chunk layer (self-host), so it merges via interleave_conversation_search_ids(
+        # instead of the plain two-way merge_conversation_search_ids( used elsewhere.
+        assert (
+            'merge_conversation_search_ids(' in source or 'interleave_conversation_search_ids(' in source
+        ), f'{rel_path} lost the hybrid merge of #5072'

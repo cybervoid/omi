@@ -1,6 +1,7 @@
 import logging
 import os
 from datetime import datetime, timezone
+from itertools import zip_longest
 from typing import Any, Dict, List, Optional, cast
 from urllib.parse import urlsplit
 from uuid import UUID
@@ -356,6 +357,24 @@ def keyword_search_conversation_ids(
 def merge_conversation_search_ids(keyword_ids: List[str], vector_ids: List[str]) -> List[str]:
     """Merge keyword and vector search results, keyword hits first (exact text matches), deduplicated."""
     return list(keyword_ids) + [cid for cid in vector_ids if cid not in keyword_ids]
+
+
+def interleave_conversation_search_ids(*id_lists: List[str]) -> List[str]:
+    """Round-robin merge of ranked id lists, preserving each list's order and de-duplicating.
+
+    Unlike ``merge_conversation_search_ids`` (which fully concatenates one list before the next),
+    round-robin keeps every source's top hits near the front. That matters once a per-source cap is
+    applied downstream: a high-precision layer (e.g. verbatim transcript-chunk hits) must not be
+    starved when another layer (e.g. fuzzy keyword title matches) returns a full page of results.
+    """
+    merged: List[str] = []
+    seen = set()
+    for tier in zip_longest(*id_lists):
+        for cid in tier:
+            if cid and cid not in seen:
+                seen.add(cid)
+                merged.append(cid)
+    return merged
 
 
 # ---------------------------------------------------------------------------
