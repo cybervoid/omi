@@ -22,6 +22,7 @@ agent_config_context: contextvars.ContextVar[dict] = contextvars.ContextVar('age
 
 from models.app import App
 from models.chat import Message, ChatSession, PageContext
+import utils.retrieval.chat_resilience as chat_resilience
 from utils.retrieval.tools import (
     get_conversations_tool,
     search_conversations_tool,
@@ -62,6 +63,7 @@ from utils.retrieval.safety import (
 )
 from utils.retrieval.web_search_gate import SERVER_WEB_SEARCH_NAME, WEB_SEARCH_TOOL, request_tools_after_private_taint
 from utils.observability.fallback import record_fallback
+from utils.retrieval import chat_resilience
 from utils.llm.byok_errors import handle_llm_error_async
 from utils.llm.clients import anthropic_client, ANTHROPIC_AGENT_MODEL, get_llm, num_tokens_from_string
 from utils.llm.usage_tracker import reset_usage_context, set_usage_context
@@ -649,6 +651,12 @@ async def _run_anthropic_agent_stream(
     # sessions have gaps >5min between turns, so the 5-min default kills cache hit rate.
     system_blocks = [{"type": "text", "text": system_prompt, "cache_control": {"type": "ephemeral", "ttl": "1h"}}]
 
+    # Snapshot the pre-tool conversation (plain user/assistant text) so the self-host provider
+    # fallback (chat_resilience.run_openai_fallback_agent) can restart the agent loop cleanly on
+    # another provider even after tool_use/tool_result blocks have been appended to `messages` on
+    # later turns. list() copies the references; the original turn dicts are never mutated.
+    original_messages = list(messages)
+
     producer_started_at = asyncio.get_running_loop().time()
     loop_iteration = 0
 
@@ -662,6 +670,20 @@ async def _run_anthropic_agent_stream(
         request_tools, server_web_search_withheld = request_tools_after_private_taint(
             tool_schemas, messages, withheld=server_web_search_withheld
         )
+
+        # Self-host: skip Anthropic when the circuit breaker is tripped and go
+        # straight to the OpenAI-compatible fallback chain.
+        if chat_resilience.should_skip_anthropic():
+            print("Anthropic circuit open — using OpenAI-compatible fallback", flush=True)
+            async for result in chat_resilience.run_openai_fallback_agent(
+                messages=messages,
+                tools=request_tools if use_tools else None,
+                tool_executor=tool_executor if use_tools else None,
+                status_callback=status_callback,
+            ):
+                yield result
+            return
+
 
         attempts_made = 0
         retried_reason: Optional[str] = None
@@ -727,6 +749,7 @@ async def _run_anthropic_agent_stream(
 
                     # Get final message while stream is still open
                     response = await stream.get_final_message()
+                chat_resilience.record_anthropic_success()
                 break
 
             except Exception as e:
@@ -747,6 +770,36 @@ async def _run_anthropic_agent_stream(
                     )
                     await asyncio.sleep(AGENT_STREAM_PROVIDER_RETRY_BACKOFF_SECONDS)
                     continue
+
+                if chat_resilience.is_rate_limit_error(e):
+                    chat_resilience.record_anthropic_rate_limit()
+
+                # Self-host: Anthropic stays unavailable (retries exhausted, or a non-retryable
+                # error such as a persistent 429 — see safety.TRANSIENT_PROVIDER_STATUS_CODES).
+                # Try the provider-fallback chain before giving up, as long as nothing has
+                # reached the user yet (a fallback answer cannot be spliced after partial
+                # Anthropic output). A post-tool synthesis turn can fail too, so this triggers on
+                # any loop iteration, not just the first.
+                if not _has_answer(full_response) and chat_resilience.fallback_enabled():
+                    logger.warning(
+                        "Anthropic unavailable (%s) on turn %d; switching to provider fallback",
+                        type(e).__name__,
+                        loop_iteration,
+                    )
+                    if await chat_resilience.run_openai_fallback_agent(
+                        system_prompt,
+                        original_messages,
+                        tool_registry,
+                        callback,
+                        full_response,
+                        safety_guard,
+                        configurable,
+                        core_tools=CORE_TOOLS,
+                        execute_tool=_execute_tool,
+                        get_tool_display_name=get_tool_display_name,
+                    ):
+                        return None
+                    logger.warning('Provider fallback failed; returning generic error')
 
                 await handle_llm_error_async(e, 'anthropic', feature='chat_agent', model=ANTHROPIC_AGENT_MODEL)
                 # ``put_data`` alone reaches the live stream but not the persisted answer, so the

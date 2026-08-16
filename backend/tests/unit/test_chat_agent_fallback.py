@@ -129,6 +129,23 @@ def _drain(callback):
     return items
 
 
+def _run_with_callback(coro_factory):
+    """Run ``coro_factory(callback)`` inside a fresh event loop.
+
+    ``AsyncStreamingCallback`` binds ``asyncio.get_running_loop()`` at construction time
+    (so sync providers on an executor thread can marshal queue writes back to the request
+    loop), so the callback must be built from inside the loop the coroutine runs on rather
+    than before ``asyncio.run(...)`` is called.
+    """
+
+    async def _inner():
+        callback = agentic.AsyncStreamingCallback()
+        result = await coro_factory(callback)
+        return callback, result
+
+    return asyncio.run(_inner())
+
+
 def _anthropic_status_error(status_code, headers=None):
     """Build a real anthropic.APIStatusError (its constructor needs an httpx.Response).
 
@@ -339,12 +356,11 @@ def test_fallback_no_tool_calls_streams_answer(monkeypatch):
         lambda provider, model, streaming=False: _FakeLLM([_FakeAI(content="Hello from fallback")]),
     )
 
-    callback = agentic.AsyncStreamingCallback()
     guard = agentic.AgentSafetyGuard(max_tool_calls=25, max_context_tokens=500000)
     full_response = []
 
-    ok = asyncio.run(
-        chat_resilience.run_openai_fallback_agent(
+    callback, ok = _run_with_callback(
+        lambda callback: chat_resilience.run_openai_fallback_agent(
             "system",
             [{"role": "user", "content": "hi"}],
             {},
@@ -384,12 +400,11 @@ def test_fallback_executes_tool_then_answers(monkeypatch):
         executed.append((name, args))
         return "TOOL_RESULT"
 
-    callback = agentic.AsyncStreamingCallback()
     guard = agentic.AgentSafetyGuard(max_tool_calls=25, max_context_tokens=500000)
     full_response = []
 
-    ok = asyncio.run(
-        chat_resilience.run_openai_fallback_agent(
+    callback, ok = _run_with_callback(
+        lambda callback: chat_resilience.run_openai_fallback_agent(
             "system",
             [{"role": "user", "content": "do it"}],
             {},
@@ -422,12 +437,11 @@ def test_fallback_advances_to_next_provider_on_error(monkeypatch):
 
     monkeypatch.setattr(chat_resilience, "get_or_create_openai_compatible_llm", _factory)
 
-    callback = agentic.AsyncStreamingCallback()
     guard = agentic.AgentSafetyGuard(max_tool_calls=25, max_context_tokens=500000)
     full_response = []
 
-    ok = asyncio.run(
-        chat_resilience.run_openai_fallback_agent(
+    callback, ok = _run_with_callback(
+        lambda callback: chat_resilience.run_openai_fallback_agent(
             "system",
             [{"role": "user", "content": "hi"}],
             {},
@@ -448,11 +462,10 @@ def test_fallback_advances_to_next_provider_on_error(monkeypatch):
 def test_fallback_returns_false_when_chain_empty(monkeypatch):
     monkeypatch.setenv("CHAT_AGENT_FALLBACK_CHAIN", "bogus:only,alsobad")
 
-    callback = agentic.AsyncStreamingCallback()
     guard = agentic.AgentSafetyGuard(max_tool_calls=25, max_context_tokens=500000)
 
-    ok = asyncio.run(
-        chat_resilience.run_openai_fallback_agent(
+    callback, ok = _run_with_callback(
+        lambda callback: chat_resilience.run_openai_fallback_agent(
             "system",
             [{"role": "user", "content": "hi"}],
             {},
@@ -484,12 +497,11 @@ def test_fallback_skips_provider_without_credentials(monkeypatch):
 
     monkeypatch.setattr(chat_resilience, "get_or_create_openai_compatible_llm", _factory)
 
-    callback = agentic.AsyncStreamingCallback()
     guard = agentic.AgentSafetyGuard(max_tool_calls=25, max_context_tokens=500000)
     full_response = []
 
-    ok = asyncio.run(
-        chat_resilience.run_openai_fallback_agent(
+    callback, ok = _run_with_callback(
+        lambda callback: chat_resilience.run_openai_fallback_agent(
             "system",
             [{"role": "user", "content": "hi"}],
             {},
@@ -519,12 +531,11 @@ def test_fallback_unavailable_when_no_credentials(monkeypatch):
 
     monkeypatch.setattr(chat_resilience, "get_or_create_openai_compatible_llm", _factory)
 
-    callback = agentic.AsyncStreamingCallback()
     guard = agentic.AgentSafetyGuard(max_tool_calls=25, max_context_tokens=500000)
     full_response = []
 
-    ok = asyncio.run(
-        chat_resilience.run_openai_fallback_agent(
+    callback, ok = _run_with_callback(
+        lambda callback: chat_resilience.run_openai_fallback_agent(
             "system",
             [{"role": "user", "content": "hi"}],
             {},
@@ -640,13 +651,12 @@ def test_post_tool_synthesis_429_falls_back_and_answers(monkeypatch):
     # Injected via the seam by reference to agentic's module global -> patch it here.
     monkeypatch.setattr(agentic, "_execute_tool", _fake_execute)
 
-    callback = agentic.AsyncStreamingCallback()
     guard = agentic.AgentSafetyGuard(max_tool_calls=25, max_context_tokens=500000)
     full_response = []
     messages = [{"role": "user", "content": "find my lunch plans"}]
 
-    asyncio.run(
-        agentic._run_anthropic_agent_stream(
+    callback, _ = _run_with_callback(
+        lambda callback: agentic._run_anthropic_agent_stream(
             "SYSTEM", messages, [], {}, callback, full_response, guard, {"user_id": "u1"}
         )
     )

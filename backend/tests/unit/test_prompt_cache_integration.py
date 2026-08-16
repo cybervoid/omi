@@ -182,6 +182,18 @@ providers_mod.get_or_create_gemini_llm = MagicMock(return_value=mock_llm)
 providers_mod.get_or_create_openai_compatible_llm = MagicMock(return_value=mock_llm)
 providers_mod._llm_cache = {}
 
+
+
+class _StubOpenAICompatibleProviderConfig:
+    def __init__(self, api_key_env: str):
+        self.api_key_env = api_key_env
+
+
+providers_mod.OPENAI_COMPATIBLE_PROVIDERS = {
+    "openai": _StubOpenAICompatibleProviderConfig("OPENAI_API_KEY"),
+    "openrouter": _StubOpenAICompatibleProviderConfig("OPENROUTER_API_KEY"),
+}
+
 llm_mod = _stub_module("utils.llm")
 if not hasattr(llm_mod, "__path__"):
     llm_mod.__path__ = [str(BACKEND_DIR / "utils" / "llm")]
@@ -333,6 +345,8 @@ _load_module_from_file("utils.observability.fallback", BACKEND_DIR / "utils" / "
 # request_tools_after_private_taint from this sibling. utils.retrieval is stubbed
 # with an empty __path__, so the module must be loaded from file like safety.
 _load_module_from_file("utils.retrieval.web_search_gate", BACKEND_DIR / "utils" / "retrieval" / "web_search_gate.py")
+# Real (import-light) self-host chat resilience for agentic provider fallback.
+_load_module_from_file("utils.retrieval.chat_resilience", BACKEND_DIR / "utils" / "retrieval" / "chat_resilience.py")
 
 # Stub firebase_admin (used by endpoints.py and auth)
 firebase_mod = _stub_module("firebase_admin")
