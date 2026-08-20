@@ -470,9 +470,7 @@ def _extract_app_id(tool_name: str) -> Optional[str]:
         parts = tool_name.split('_', 1)
         if len(parts) == 2:
             return parts[0]
-    return None
-
-
+    return
 # ---------------------------------------------------------------------------
 # Calendar tool status messages
 # ---------------------------------------------------------------------------
@@ -553,23 +551,21 @@ def _inject_current_datetime(anthropic_messages: list, datetime_block: str) -> l
 
 async def get_mobile_city(uid: str, platform: Optional[str]) -> Optional[str]:
     if platform is None or platform.strip().lower() not in {'ios', 'android'}:
-        return None
+        return
     try:
         consent = await run_blocking(db_executor, get_user_location_context_consent, uid)
         if consent is None or not consent.is_active():
-            return None
+            return
         geolocation = await run_blocking(db_executor, get_cached_user_geolocation, uid)
         if not geolocation:
-            return None
+            return
         validated_geolocation = Geolocation.model_validate(geolocation)
         return await async_get_google_maps_city(validated_geolocation.latitude, validated_geolocation.longitude)
     except (KeyError, TypeError, ValueError):
-        return None
+        return
     except Exception as error:
         logger.warning('Mobile city context unavailable error_type=%s', type(error).__name__)
-        return None
-
-
+        return
 # ---------------------------------------------------------------------------
 # Core Anthropic agent streaming loop
 # ---------------------------------------------------------------------------
@@ -608,7 +604,7 @@ async def _end_with_answer_guarantee(
     """
     if _has_answer(full_response):
         await callback.end()
-        return None
+        return
     logger.warning('Chat agent loop finished with no answer provider=%s', provider)
     await _put_answer_text(callback, full_response, AGENT_EMPTY_ANSWER_MESSAGE)
     await callback.end()
@@ -798,7 +794,7 @@ async def _run_anthropic_agent_stream(
                         execute_tool=_execute_tool,
                         get_tool_display_name=get_tool_display_name,
                     ):
-                        return None
+                        return
                     logger.warning('Provider fallback failed; returning generic error')
 
                 await handle_llm_error_async(e, 'anthropic', feature='chat_agent', model=ANTHROPIC_AGENT_MODEL)
@@ -849,8 +845,7 @@ async def _run_anthropic_agent_stream(
                 await _put_answer_text(callback, full_response, f"\n\n{str(e)}")
                 logger.error(f"Safety Guard blocked tool call: {e}")
                 await callback.end()
-                return None
-
+                return
             # Execute tool
             try:
                 result = await _execute_tool(block.name, block.input, tool_registry, configurable)
@@ -870,8 +865,7 @@ async def _run_anthropic_agent_stream(
                 await _put_answer_text(callback, full_response, f"\n\n{str(e)}")
                 logger.error(f"Safety Guard blocked due to context size: {e}")
                 await callback.end()
-                return None
-
+                return
             tool_results.append(
                 {
                     "type": "tool_result",
@@ -1117,8 +1111,7 @@ async def _run_openai_agent_stream(
                 await _put_answer_text(callback, full_response, f'\n\n{str(error)}')
                 logger.error('Safety Guard blocked tool call: %s', error)
                 await callback.end()
-                return None
-
+                return
             tool_name = tool_call['name']
             tool_obj = tool_registry.get(tool_name)
             await callback.put_thought(get_tool_display_name(tool_name, tool_obj), app_id=_extract_app_id(tool_name))
@@ -1136,7 +1129,7 @@ async def _run_openai_agent_stream(
                 await _put_answer_text(callback, full_response, f'\n\n{str(error)}')
                 logger.error('Safety Guard blocked due to context size: %s', error)
                 await callback.end()
-                return None
+                return
             tool_results.append({'role': 'tool', 'tool_call_id': tool_call['id'], 'content': result})
 
         assistant_message = {
