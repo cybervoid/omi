@@ -13,6 +13,8 @@ from dataclasses import dataclass
 from enum import Enum
 
 from config.stt_provider_policy import (
+    DEEPGRAM_CLOUD_PROVIDER,
+    DEEPGRAM_PROVIDERS,
     DEEPGRAM_SELF_HOSTED_PROVIDER,
     MODULATE_PROVIDER,
     PARAKEET_PROVIDER,
@@ -106,9 +108,34 @@ def provider_for_model_token(model: str) -> str | None:
         return PrerecordedSTTService.MODULATE
     if provider == PARAKEET_PROVIDER:
         return PrerecordedSTTService.PARAKEET
-    if provider == DEEPGRAM_SELF_HOSTED_PROVIDER:
+    # Cloud and self-hosted Deepgram share the same prerecorded client path;
+    # runtime endpoint selection is owned by the Deepgram SDK config, not the
+    # model token.
+    if (
+        provider in DEEPGRAM_PROVIDERS
+        or provider == DEEPGRAM_CLOUD_PROVIDER
+        or provider == DEEPGRAM_SELF_HOSTED_PROVIDER
+    ):
         return PrerecordedSTTService.DEEPGRAM
     return None
+
+
+def _policy_provider_for_prerecorded_service(service: str) -> str | None:
+    """Map prerecorded service ids (deepgram/modulate/parakeet) onto policy keys."""
+    if service == PrerecordedSTTService.DEEPGRAM:
+        return DEEPGRAM_CLOUD_PROVIDER
+    if service == PrerecordedSTTService.MODULATE:
+        return MODULATE_PROVIDER
+    if service == PrerecordedSTTService.PARAKEET:
+        return PARAKEET_PROVIDER
+    return None
+
+
+def _prerecorded_service_enabled(service: str) -> bool:
+    policy = _policy_provider_for_prerecorded_service(service)
+    if policy is None:
+        return False
+    return provider_is_enabled(policy, STTServingSurface.PRERECORDED)
 
 
 def providers_for_model_config(raw: str) -> tuple[str, ...]:
@@ -116,22 +143,13 @@ def providers_for_model_config(raw: str) -> tuple[str, ...]:
     providers: list[str] = []
     for model in parse_prerecorded_models(raw):
         provider = provider_for_model_token(model)
-        if (
-            provider is not None
-            and provider_is_enabled(provider, STTServingSurface.PRERECORDED)
-            and provider not in providers
-        ):
+        if provider is not None and _prerecorded_service_enabled(provider) and provider not in providers:
             providers.append(provider)
     # Retired/unknown tokens and unsupported languages fall through to the
-    # non-Deepgram defaults. Include both because language capability decides
-    # which one serves the request.
+    # defaults. Include every default provider language capability may select.
     for model in DEFAULT_STT_PRERECORDED_MODELS:
         provider = provider_for_model_token(model)
-        if (
-            provider is not None
-            and provider_is_enabled(provider, STTServingSurface.PRERECORDED)
-            and provider not in providers
-        ):
+        if provider is not None and _prerecorded_service_enabled(provider) and provider not in providers:
             providers.append(provider)
     return tuple(providers)
 
@@ -147,8 +165,7 @@ def required_env_for_model_config(raw: str | None, *, source_is_opaque: bool = F
         providers = tuple(
             provider
             for provider, contract in PROVIDER_ENVIRONMENT_CONTRACTS.items()
-            if contract.required_when_model_source_is_opaque
-            and provider_is_enabled(provider, STTServingSurface.PRERECORDED)
+            if contract.required_when_model_source_is_opaque and _prerecorded_service_enabled(provider)
         )
     else:
         providers = providers_for_model_config(raw or '')

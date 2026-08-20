@@ -25,10 +25,15 @@ def test_empty_model_preference_uses_non_deepgram_defaults():
 
 
 def test_literal_and_opaque_deploy_requirements_share_provider_contract():
-    expected = {'HOSTED_PARAKEET_API_URL', 'MODULATE_API_KEY'}
-    for model_config in ('dg-nova-3', 'modulate-velma-2', 'parakeet', 'unknown-model', 'parakeet,dg-nova-3'):
-        assert set(required_env_for_model_config(model_config)) == expected
-    assert set(required_env_for_model_config(None, source_is_opaque=True)) == expected
+    # Opaque + default fallback always includes Parakeet/Velma; naming Deepgram adds its key.
+    base = {'HOSTED_PARAKEET_API_URL', 'MODULATE_API_KEY'}
+    with_dg = base | {'DEEPGRAM_API_KEY'}
+    assert set(required_env_for_model_config('modulate-velma-2')) == base
+    assert set(required_env_for_model_config('parakeet')) == base
+    assert set(required_env_for_model_config('unknown-model')) == base
+    assert set(required_env_for_model_config('dg-nova-3')) == with_dg
+    assert set(required_env_for_model_config('parakeet,dg-nova-3')) == with_dg
+    assert set(required_env_for_model_config(None, source_is_opaque=True)) == with_dg
 
 
 def test_runtime_configuration_error_identifies_provider_and_missing_binding():

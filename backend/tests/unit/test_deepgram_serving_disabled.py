@@ -61,15 +61,15 @@ def test_ptt_never_selects_deepgram_even_when_configured(monkeypatch):
     assert model == 'velma-2'
 
 
-def test_prerecorded_still_ignores_a_deepgram_model_configuration(monkeypatch):
-    """Batch stays on Parakeet/Velma even if a manifest names Deepgram."""
+def test_prerecorded_selects_deepgram_when_configured(monkeypatch):
+    """Self-host batch reuses cloud Deepgram when named (or defaulted) for PRERECORDED."""
     monkeypatch.setenv('STT_PRERECORDED_MODEL', 'dg-nova-3')
 
     service, language, model = get_prerecorded_service('ja')
 
-    assert service == PrerecordedSTTService.MODULATE
+    assert service == PrerecordedSTTService.DEEPGRAM
     assert language == 'ja'
-    assert model == 'velma-2'
+    assert model == 'nova-3'
 
 
 def test_streaming_can_select_explicit_self_hosted_deepgram(monkeypatch):
@@ -134,7 +134,9 @@ def test_self_hosted_endpoint_must_be_set_when_self_hosting_is_declared():
 def test_policy_keeps_hosted_and_self_hosted_deepgram_distinct():
     assert provider_is_enabled(DEEPGRAM_CLOUD_PROVIDER, STTServingSurface.STREAMING)
     assert provider_is_enabled(DEEPGRAM_SELF_HOSTED_PROVIDER, STTServingSurface.STREAMING)
-    assert not provider_is_enabled(DEEPGRAM_CLOUD_PROVIDER, STTServingSurface.PRERECORDED)
+    # Self-host fork: batch/prerecorded may use cloud Deepgram (same API key as listen).
+    assert provider_is_enabled(DEEPGRAM_CLOUD_PROVIDER, STTServingSurface.PRERECORDED)
+    assert provider_is_enabled(DEEPGRAM_SELF_HOSTED_PROVIDER, STTServingSurface.PRERECORDED)
     assert not provider_is_enabled(DEEPGRAM_CLOUD_PROVIDER, STTServingSurface.PTT)
     assert not provider_is_enabled(DEEPGRAM_SELF_HOSTED_PROVIDER, STTServingSurface.PTT)
 

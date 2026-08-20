@@ -109,8 +109,12 @@ def _prod_model_preference(monkeypatch):
 def test_every_client_offered_language_resolves_to_a_provider(language):
     service, _resolved_language, model = get_prerecorded_service(language)
 
-    assert service in {PrerecordedSTTService.MODULATE, PrerecordedSTTService.PARAKEET}
-    assert model in {'velma-2', 'parakeet'}
+    assert service in {
+        PrerecordedSTTService.MODULATE,
+        PrerecordedSTTService.PARAKEET,
+        PrerecordedSTTService.DEEPGRAM,
+    }
+    assert model in {'velma-2', 'parakeet', 'nova-3', 'nova-2'}
 
 
 @pytest.mark.parametrize('language,expected_service', sorted(ALREADY_ROUTED.items()))

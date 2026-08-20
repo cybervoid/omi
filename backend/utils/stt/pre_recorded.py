@@ -22,6 +22,8 @@ from config.prerecorded_stt import (
     require_provider_environment,
 )
 from config.stt_provider_policy import (
+    DEEPGRAM_CLOUD_PROVIDER,
+    DEEPGRAM_MODEL_TOKENS,
     MODULATE_PROVIDER,
     PARAKEET_PROVIDER,
     STTServingSurface,
@@ -92,6 +94,17 @@ def get_prerecorded_service(language: Optional[str] = 'en') -> Tuple[str, Option
     def select(models: Sequence[str]) -> Optional[Tuple[str, Optional[str], str]]:
         for m in models:
             m = m.strip()
+            # Deepgram model tokens (nova-3 / dg-nova-3 / …). Cloud Deepgram is
+            # admitted on PRERECORDED on this self-host fork so offline sync can
+            # reuse the same DEEPGRAM_API_KEY as live listen without Parakeet.
+            if m.lower() in DEEPGRAM_MODEL_TOKENS and provider_is_enabled(
+                DEEPGRAM_CLOUD_PROVIDER, STTServingSurface.PRERECORDED
+            ):
+                # nova-3 accepts many codes; unknown bases still work via multi.
+                lang = base_lang if base_lang in _deepgram_nova3_languages else 'multi'
+                # Normalize token to the SDK model name (dg-nova-3 → nova-3).
+                sdk_model = 'nova-3' if 'nova-3' in m.lower() else ('nova-2' if 'nova-2' in m.lower() else 'nova-3')
+                return PrerecordedSTTService.DEEPGRAM, lang, sdk_model
             if m == 'modulate-velma-2' and provider_is_enabled(MODULATE_PROVIDER, STTServingSurface.PRERECORDED):
                 if base_lang in {'en', 'es', 'fr', 'de', 'it', 'pt', 'nl', 'ja', 'ko', 'zh'}:
                     return PrerecordedSTTService.MODULATE, base_lang, 'velma-2'
@@ -115,6 +128,11 @@ def get_prerecorded_service(language: Optional[str] = 'en') -> Tuple[str, Option
     # serve languages the capability maps omit, and values that are not codes at all.
     if provider_is_enabled(MODULATE_PROVIDER, STTServingSurface.PRERECORDED):
         return PrerecordedSTTService.MODULATE, 'multi', 'velma-2'
+
+    # Self-host Deepgram fallback when Parakeet/Velma are unavailable for this language.
+    if provider_is_enabled(DEEPGRAM_CLOUD_PROVIDER, STTServingSurface.PRERECORDED):
+        lang = base_lang if base_lang in _deepgram_nova3_languages else 'multi'
+        return PrerecordedSTTService.DEEPGRAM, lang, 'nova-3'
 
     # Only reachable with every pre-recorded provider disabled, which no retry resolves.
     raise TranscriptionFailure(TranscriptionOutcome.CONFIG_ERROR, retryable=False)
@@ -1058,6 +1076,9 @@ class ParakeetPrerecordedProvider(PrerecordedSTTProvider):
 def get_prerecorded_provider(language: Optional[str] = 'en') -> PrerecordedSTTProvider:
     """Construct exactly the language-aware provider selected for telemetry."""
     service, _provider_language, model = get_prerecorded_service(language)
+    require_provider_environment(service)
+    if service == PrerecordedSTTService.DEEPGRAM:
+        return DeepgramPrerecordedProvider(model=model)
     if service == PrerecordedSTTService.MODULATE:
         return ModulatePrerecordedProvider()
     if service == PrerecordedSTTService.PARAKEET:

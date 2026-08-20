@@ -98,15 +98,16 @@ MODULATE_SUPPORTED_LANGUAGES: Final[frozenset[str]] = frozenset(
 )
 
 # This is the single source of truth for provider enablement. Cloud Deepgram
-# serves the live surfaces; batch stays on Parakeet/Velma. Self-hosted Deepgram
-# is a distinct product, available only to a runtime with its explicit endpoint
-# configured. Future availability changes start here.
+# serves live streaming and (on this self-host fork) batch/prerecorded when no
+# Parakeet/Modulate endpoint is deployed. Self-hosted Deepgram is a distinct
+# product, available only to a runtime with its explicit endpoint configured.
+# Future availability changes start here.
 PROVIDER_SERVING_SURFACES: Final[Mapping[str, frozenset[STTServingSurface]]] = {
     # PTT is streaming-only in transcribe_voice_message_stream, which dispatches
     # Parakeet and Modulate and raises on anything else. Admitting Deepgram here
     # would select a provider that surface cannot connect.
-    DEEPGRAM_CLOUD_PROVIDER: frozenset({STTServingSurface.STREAMING}),
-    DEEPGRAM_SELF_HOSTED_PROVIDER: frozenset({STTServingSurface.STREAMING}),
+    DEEPGRAM_CLOUD_PROVIDER: frozenset({STTServingSurface.STREAMING, STTServingSurface.PRERECORDED}),
+    DEEPGRAM_SELF_HOSTED_PROVIDER: frozenset({STTServingSurface.STREAMING, STTServingSurface.PRERECORDED}),
     MODULATE_PROVIDER: frozenset(
         {
             STTServingSurface.STREAMING,
@@ -135,9 +136,9 @@ DEFAULT_MODELS_BY_SURFACE: Final[Mapping[STTServingSurface, tuple[str, ...]]] = 
     # concurrency and Parakeet streaming is English-only, so neither can hold the
     # primary slot for a multi-language live product.
     STTServingSurface.STREAMING: ('dg-nova-3', 'modulate-velma-2', 'parakeet'),
-    # Batch work is queued, so Parakeet's bounded GPU means waiting rather than the
-    # user-visible failure it causes on the streaming surface. Prefer the self-hosted
-    # provider here and keep Velma as the overflow.
+    # Batch work is queued. Defaults stay Parakeet/Velma; self-host deployments that
+    # only have DEEPGRAM_API_KEY set STT_PRERECORDED_MODEL=dg-nova-3 (cloud Deepgram
+    # is admitted on PRERECORDED below).
     STTServingSurface.PRERECORDED: ('parakeet', 'modulate-velma-2'),
     STTServingSurface.PTT: ('modulate-velma-2', 'parakeet'),
 }
