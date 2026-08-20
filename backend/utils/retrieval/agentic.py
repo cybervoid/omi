@@ -671,14 +671,23 @@ async def _run_anthropic_agent_stream(
         # straight to the OpenAI-compatible fallback chain.
         if chat_resilience.should_skip_anthropic():
             print("Anthropic circuit open — using OpenAI-compatible fallback", flush=True)
-            async for result in chat_resilience.run_openai_fallback_agent(
-                messages=messages,
-                tools=request_tools if use_tools else None,
-                tool_executor=tool_executor if use_tools else None,
-                status_callback=status_callback,
+            if await chat_resilience.run_openai_fallback_agent(
+                system_prompt,
+                original_messages,
+                tool_registry,
+                callback,
+                full_response,
+                safety_guard,
+                configurable,
+                core_tools=CORE_TOOLS,
+                execute_tool=_execute_tool,
+                get_tool_display_name=get_tool_display_name,
             ):
-                yield result
-            return
+                return None
+            logger.warning('Provider fallback failed while circuit open; returning generic error')
+            await _put_answer_text(callback, full_response, "\n\nSorry, I encountered an error. Please try again.")
+            await callback.end()
+            return 'provider_circuit_open'
 
 
         attempts_made = 0

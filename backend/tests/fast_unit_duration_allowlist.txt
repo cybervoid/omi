@@ -293,3 +293,8 @@ tests/unit/test_memory_offset_read_cost.py::test_status_lookups_are_not_repeated
 tests/unit/test_list_read_budget_contract.py::test_conversations_large_offsets_are_served_and_charged[20000-19000-1000]
 # First test in the file-isolated memories router suite amortizes the module import.
 tests/unit/test_memories_archive_and_read_contracts.py::test_get_memories_forwards_include_archive
+tests/unit/test_render_backend_runtime_env.py::test_render_prod_keeps_memory_maintenance_job_promotion_off
+# AST-parses every backend/*.py file to statically find collection_group() call sites;
+# this repo-wide scan is inherently CPU-heavier than a normal unit test while staying
+# hermetic (no network, no real Firestore).
+tests/unit/test_firestore_index_coverage.py::test_every_collection_group_filter_has_a_declared_index
