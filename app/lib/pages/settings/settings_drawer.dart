@@ -34,9 +34,9 @@ import '../conversations/auto_sync_page.dart';
 import '../conversations/sync_page.dart';
 
 class _SearchableItem {
-  const String title;
-  const Widget icon;
-  const VoidCallback onTap;
+  final String title;
+  final Widget icon;
+  final VoidCallback onTap;
 
   const _SearchableItem({required this.title, required this.icon, required this.onTap});
 }
