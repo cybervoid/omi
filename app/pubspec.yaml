@@ -7,7 +7,8 @@ version: 1.0.543+992
 
 
 environment:
-  sdk: ">=3.0.0 <4.0.0"
+  # json_serializable (via build_runner on Flutter 3.47+) requires ^3.8.0 language version.
+  sdk: ">=3.8.0 <4.0.0"
 
 dependencies:
   flutter:
