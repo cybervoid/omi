@@ -1284,6 +1284,14 @@ def process_segment(
     except SyncConversationPersistenceFenced:
         raise
     except Exception as e:
+        # Privacy-safe: exception type only — never provider response bodies or audio paths.
+        logger.error(
+            'event=sync_segment_exception outcome=failed exception_type=%s provider=%s model=%s lane=%s',
+            _bounded_exception_type(e),
+            bounded_provider(provider),
+            _bounded_sync_model(model),
+            _bounded_sync_lane(sync_lane),
+        )
         failure = failure_from_exception(e, provider=provider)
         _set_deferred_segment_outcome(
             deferred_outcome,
