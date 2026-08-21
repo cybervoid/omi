@@ -74,14 +74,40 @@ abstract class Env {
     }
   }
 
-  static void validateFirebaseProject({required String projectId, AppEnvironmentProfile? configuredProfile}) {
+  static void validateFirebaseProject({
+    required String projectId,
+    AppEnvironmentProfile? configuredProfile,
+    String? configuredApiBaseUrl,
+  }) {
     final effectiveProfile = configuredProfile ?? profile;
+    final api = (configuredApiBaseUrl ?? apiBaseUrl ?? '').trim();
+
+    // Self-hosted remote under local_dev pairs a real Firebase project (injected
+    // at build time) with a custom public API. Demo/emulator Firebase is only
+    // valid when the API itself is local.
+    if (effectiveProfile == AppEnvironmentProfile.localDev && !_isLocalDevelopmentApi(api)) {
+      if (projectId == AppEnvironmentProfile.localDev.firebaseProjectId) {
+        throw StateError(
+          'Self-hosted local_dev requires a real Firebase project, not '
+          '${AppEnvironmentProfile.localDev.firebaseProjectId}.',
+        );
+      }
+      return;
+    }
+
     if (projectId != effectiveProfile.firebaseProjectId) {
       throw StateError(
         'Mobile profile ${effectiveProfile.name} requires Firebase project ${effectiveProfile.firebaseProjectId}, '
         'but the app was initialized with $projectId.',
       );
     }
+  }
+
+  /// True when this process should talk to the Firebase Auth emulator.
+  /// Self-hosted remote APIs under local_dev use real Firebase instead.
+  static bool get shouldUseFirebaseAuthEmulator {
+    if (!profile.usesFirebaseAuthEmulator) return false;
+    return _isLocalDevelopmentApi(apiBaseUrl ?? profile.defaultApiBaseUrl);
   }
 
   /// Production-family packages have one pinned backend authority. This runs
@@ -97,13 +123,14 @@ abstract class Env {
     final expected = effectiveProfile.defaultApiBaseUrl.replaceFirst(RegExp(r'/+$'), '');
 
     if (effectiveProfile == AppEnvironmentProfile.localDev) {
-      if (!_isLocalDevelopmentApi(normalized)) {
-        throw StateError(
-          'Profile local_dev requires a loopback or private-network API endpoint; '
-          'use mobile_beta for https://api.omiapi.com/.',
-        );
+      if (_isLocalDevelopmentApi(normalized) || _isSelfHostedRemoteApi(normalized)) {
+        return;
       }
-      return;
+      throw StateError(
+        'Profile local_dev requires a loopback/private-network API endpoint, '
+        'or a self-hosted remote API (not api.omi.me / api.omiapi.com). '
+        'Got: $normalized',
+      );
     }
 
     if (effectiveProfile == AppEnvironmentProfile.localProd) {
@@ -149,6 +176,19 @@ abstract class Env {
         // it either. Bounded to the real /10 — 100.63.x and 100.128.x are public.
         (first == 100 && second >= 64 && second <= 127) ||
         (first == 127);
+  }
+
+  /// Public self-hosted backends (sslip, ngrok, custom domains). Not Omi cloud.
+  static bool _isSelfHostedRemoteApi(String base) {
+    final uri = Uri.tryParse(base);
+    if (uri == null || uri.host.isEmpty || (uri.scheme != 'http' && uri.scheme != 'https')) {
+      return false;
+    }
+    if (_isLocalDevelopmentApi(base)) return false;
+    final host = uri.host.toLowerCase();
+    // Keep Omi cloud serving planes on their dedicated profiles.
+    if (host == 'api.omi.me' || host == 'api.omiapi.com') return false;
+    return true;
   }
 
   static String? get googleMapsApiKey => _instance.googleMapsApiKey;

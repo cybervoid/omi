@@ -251,6 +251,42 @@ void main() {
         throwsStateError,
       );
     });
+
+    test('local development accepts self-hosted public APIs', () {
+      for (final endpoint in [
+        'https://35.223.15.33.sslip.io/',
+        'https://example.ngrok-free.app/',
+        'https://omi-backend.example.com/',
+      ]) {
+        expect(
+          () => validateApplicationStartupRouting(
+            environment: Environment.dev,
+            configuredApiBaseUrl: endpoint,
+          ),
+          returnsNormally,
+          reason: endpoint,
+        );
+      }
+    });
+
+    test('self-hosted local_dev rejects demo Firebase and accepts a real project', () {
+      expect(
+        () => Env.validateFirebaseProject(
+          projectId: 'demo-omi-local',
+          configuredProfile: AppEnvironmentProfile.localDev,
+          configuredApiBaseUrl: 'https://35.223.15.33.sslip.io/',
+        ),
+        throwsStateError,
+      );
+      expect(
+        () => Env.validateFirebaseProject(
+          projectId: 'based-hardware',
+          configuredProfile: AppEnvironmentProfile.localDev,
+          configuredApiBaseUrl: 'https://35.223.15.33.sslip.io/',
+        ),
+        returnsNormally,
+      );
+    });
   });
 
   test('main invokes the production startup routing seam before services initialize', () {

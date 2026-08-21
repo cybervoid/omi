@@ -143,9 +143,11 @@ Future _init() async {
   LimitlessDeviceConnection.realtimeSuppressionPolicy = () => SharedPreferencesUtil().batchModeEnabled;
 
   // Firebase
+  // Demo/emulator Firebase is only for true local_dev loopback backends.
+  // Self-hosted remote APIs (e.g. sslip.io) under the dev flavor use the
+  // injected real Firebase options (copied onto firebase_options_prod.dart in CI).
   if (Firebase.apps.isEmpty) {
-    final profile = Env.profile;
-    final options = profile == AppEnvironmentProfile.localDev
+    final options = Env.shouldUseFirebaseAuthEmulator
         ? local.DefaultFirebaseOptions.currentPlatform
         : prod.DefaultFirebaseOptions.currentPlatform;
     Env.validateFirebaseProject(projectId: options.projectId);
@@ -156,7 +158,7 @@ Future _init() async {
     Env.validateFirebaseProject(projectId: Firebase.app().options.projectId);
   }
 
-  if (Env.profile.usesFirebaseAuthEmulator) {
+  if (Env.shouldUseFirebaseAuthEmulator) {
     await FirebaseAuth.instance.useAuthEmulator(Env.firebaseAuthEmulatorHost, Env.firebaseAuthEmulatorPort);
   }
 
