@@ -58,6 +58,7 @@ from utils.memory.memory_service import MemoryService
 from utils.memory.retraction_scope import retraction_can_be_skipped
 from utils.memory.canonical_memory_adapter import ConversationReplacementConflictError
 from utils import byok
+from utils.conversations.index_sync import refresh_conversation_index
 from utils.conversations.search import (
     ConversationSearchUnavailableError,
     clamp_conversation_search_pagination,
@@ -669,7 +670,9 @@ def get_conversation_by_id(
 def patch_conversation_title(conversation_id: str, title: str, uid: str = Depends(auth.get_current_user_uid)):
     _get_valid_conversation_by_id(uid, conversation_id)
     conversations_db.update_conversation_title(uid, conversation_id, title)
-    return {'status': 'Ok', 'conversation': _get_valid_conversation_by_id(uid, conversation_id)}
+    conversation = _get_valid_conversation_by_id(uid, conversation_id)
+    submit_with_context(postprocess_executor, refresh_conversation_index, uid, conversation_id)
+    return {'status': 'Ok', 'conversation': conversation}
 
 
 @router.delete(
@@ -846,6 +849,8 @@ def patch_conversation_summary(
         raise HTTPException(status_code=404, detail="Conversation not found")
     if result == 'app_result_not_found':
         raise HTTPException(status_code=404, detail="App summary not found for this conversation")
+    if data.app_id is None:
+        submit_with_context(postprocess_executor, refresh_conversation_index, uid, conversation_id)
     return {'status': 'Ok'}
 
 
@@ -1343,6 +1348,7 @@ def set_conversation_visibility(
     else:
         redis_db.store_conversation_to_uid(conversation_id, uid)
         redis_db.add_public_conversation(conversation_id)
+    submit_with_context(postprocess_executor, refresh_conversation_index, uid, conversation_id)
 
     return {"status": "Ok"}
 
@@ -1437,6 +1443,7 @@ def send_conversation_share_email(
                 publish_token['update_time'] = update_time
         redis_db.store_conversation_to_uid(conversation_id, uid)
         redis_db.add_public_conversation(conversation_id)
+        submit_with_context(postprocess_executor, refresh_conversation_index, uid, conversation_id)
 
     def _unpublish():
         if was_shared:
@@ -1450,6 +1457,7 @@ def send_conversation_share_email(
             return
         redis_db.remove_conversation_to_uid(conversation_id)
         redis_db.remove_public_conversation(conversation_id)
+        submit_with_context(postprocess_executor, refresh_conversation_index, uid, conversation_id)
 
     def _send():
         # The reservation above is the durable ledger entry — nothing to write
@@ -1496,7 +1504,9 @@ def set_conversation_starred(conversation_id: str, starred: bool, uid: str = Dep
     logger.info(f'update_conversation_starred {conversation_id} {starred} {uid}')
     _get_valid_conversation_by_id(uid, conversation_id)
     conversations_db.set_conversation_starred(uid, conversation_id, starred)
-    return {"status": "Ok", "conversation": _get_valid_conversation_by_id(uid, conversation_id)}
+    conversation = _get_valid_conversation_by_id(uid, conversation_id)
+    submit_with_context(postprocess_executor, refresh_conversation_index, uid, conversation_id)
+    return {"status": "Ok", "conversation": conversation}
 
 
 @router.get(

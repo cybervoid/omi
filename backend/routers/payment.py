@@ -59,6 +59,7 @@ from utils.overage import (
     build_explainer_text,
     get_user_overage,
 )
+from utils.conversations.index_sync import refresh_all_user_conversation_indexes
 from utils.executors import db_executor, stripe_executor, run_blocking
 from utils.log_sanitizer import sanitize
 import os
@@ -751,6 +752,7 @@ def upgrade_subscription_endpoint(request: UpgradeSubscriptionRequest, uid: str 
                     memories_db.unlock_all_memories(uid)
                     action_items_db.unlock_all_action_items(uid)
                     clear_fair_use_on_upgrade(uid)
+                    db_executor.submit(refresh_all_user_conversation_indexes, uid)
 
             logger.info(f"Immediate plan change for user {uid}: {current_plan.value} -> {target_plan.value}")
 
@@ -989,6 +991,7 @@ async def stripe_webhook(request: Request, stripe_signature: str = Header(None))
                 await run_blocking(db_executor, memories_db.unlock_all_memories, uid)
                 await run_blocking(db_executor, action_items_db.unlock_all_action_items, uid)
                 await run_blocking(db_executor, clear_fair_use_on_upgrade, uid)
+                db_executor.submit(refresh_all_user_conversation_indexes, uid)
             subscription_id = session.get('subscription')
             if subscription_id:
                 try:
@@ -1092,6 +1095,7 @@ async def stripe_webhook(request: Request, stripe_signature: str = Header(None))
                         await run_blocking(db_executor, conversations_db.unlock_all_conversations, uid)
                         await run_blocking(db_executor, memories_db.unlock_all_memories, uid)
                         await run_blocking(db_executor, action_items_db.unlock_all_action_items, uid)
+                        db_executor.submit(refresh_all_user_conversation_indexes, uid)
                     await run_blocking(
                         db_executor, users_db.update_user_subscription, uid, new_subscription.model_dump()
                     )

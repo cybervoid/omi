@@ -186,6 +186,14 @@ def update_folder(uid: str, folder_id: str, update_data: Dict[str, Any]) -> bool
     return True
 
 
+def get_conversation_ids_in_folder(uid: str, folder_id: str) -> List[str]:
+    """Return authoritative IDs so callers can refresh projections after bulk moves."""
+    conversations_ref = db.collection('users').document(uid).collection('conversations')
+    return [
+        str(doc.id) for doc in conversations_ref.where(filter=FieldFilter('folder_id', '==', folder_id)).stream()
+    ]
+
+
 def delete_folder(uid: str, folder_id: str, move_to_folder_id: Optional[str] = None) -> bool:
     """
     Delete a folder and move its conversations to another folder.

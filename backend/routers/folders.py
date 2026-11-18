@@ -17,6 +17,8 @@ from models.folder import (
     BulkMoveConversationsResponse,
 )
 from models.conversation import Conversation, ConversationMutationResponse
+from utils.conversations.index_sync import refresh_conversation_index, refresh_conversation_indexes
+from utils.executors import postprocess_executor, submit_with_context
 from utils.conversations.render import redact_conversations_for_list
 from utils.other import endpoints as auth
 
@@ -99,7 +101,9 @@ def delete_folder(
         if not folders_db.get_folder(uid, move_to_folder_id):
             raise HTTPException(status_code=404, detail="Target folder not found")
 
+    affected_conversation_ids = folders_db.get_conversation_ids_in_folder(uid, folder_id)
     folders_db.delete_folder(uid, folder_id, move_to_folder_id)
+    submit_with_context(postprocess_executor, refresh_conversation_indexes, uid, affected_conversation_ids)
 
 
 @router.post('/v1/folders/reorder', response_model=FolderMutationResponse, tags=['folders'])
@@ -163,7 +167,9 @@ def move_conversation_to_folder(
             raise HTTPException(status_code=404, detail="Folder not found")
 
     folders_db.move_conversation_to_folder(uid, conversation_id, request.folder_id)
-    return {"status": "ok", "conversation": conversations_db.get_conversation(uid, conversation_id)}
+    conversation = conversations_db.get_conversation(uid, conversation_id)
+    submit_with_context(postprocess_executor, refresh_conversation_index, uid, conversation_id)
+    return {"status": "ok", "conversation": conversation}
 
 
 @router.post(
@@ -188,4 +194,5 @@ def bulk_move_conversations(
             raise HTTPException(status_code=402, detail="A paid plan is required to access this conversation.")
 
     moved = folders_db.bulk_move_conversations_to_folder(uid, request.conversation_ids, folder_id)
+    submit_with_context(postprocess_executor, refresh_conversation_indexes, uid, request.conversation_ids)
     return {"status": "ok", "moved_count": moved}
