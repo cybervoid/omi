@@ -6,7 +6,12 @@ import 'environment_profile.dart';
 
 abstract class Env {
   static const productionApiBaseUrl = 'https://api.omi.me/';
-  static const _apiBaseUrlFromDefine = String.fromEnvironment('OMI_API_BASE_URL');
+  // Recovery-only branch default. A compile-time OMI_API_BASE_URL still wins,
+  // but the signed CI build cannot silently fall back to the retired endpoint.
+  static const _apiBaseUrlFromDefine = String.fromEnvironment(
+    'OMI_API_BASE_URL',
+    defaultValue: 'https://35.239.109.236.sslip.io/',
+  );
   static const firebaseAuthEmulatorHost = String.fromEnvironment(
     'OMI_FIREBASE_AUTH_EMULATOR_HOST',
     defaultValue: '127.0.0.1',
