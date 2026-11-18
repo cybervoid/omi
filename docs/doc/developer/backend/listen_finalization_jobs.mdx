@@ -86,12 +86,17 @@ admission transaction persists calendar meeting context on the conversation
 alongside the lifecycle transition. Replay therefore retains the prior
 request's correctness semantics.
 
-This route requires `LISTEN_FINALIZATION_DISPATCH_MODE=cloud_tasks`. If that
-durable worker is not configured, it returns `503` before changing the
-conversation instead of falling back to an in-process task or a pusher request
-that the HTTP caller cannot service. A task-create acknowledgement failure is
-different: the committed outbox row remains `queued` and the reconciler retries
-the opaque handoff.
+This route requires the dedicated finalization queue, handler URL, audience, and
+invoker bindings, but it does not require switching all live-listen traffic to
+Cloud Tasks. If those worker bindings are not configured, it returns `503`
+before changing the conversation instead of falling back to an in-process task
+or a pusher request that the HTTP caller cannot service. A task-create
+acknowledgement failure is different: the committed outbox row remains `queued`
+and the scoped recovery reconciler retries the opaque handoff. That reconciler
+runs whenever the worker bindings exist, independent of the stale-recording
+admission flag and the global live-listen dispatch mode. Its dedicated due field
+and transaction scope fence exclude ordinary live jobs. An existing unscoped
+live job is not adopted by an exact-ID request; the route returns `503` instead.
 
 Clients can poll `GET /v1/conversations/{conversation_id}/finalization` for
 the authoritative job id, status, terminal flag, retryable flag, and bounded

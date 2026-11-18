@@ -195,7 +195,8 @@ def test_platform_key_job_dispatches_to_cloud_tasks(monkeypatch):
     intent = {'job_id': 'job-1', 'status': 'queued', 'dispatch_generation': 2, 'requires_byok': False}
     enqueue = MagicMock()
     _mock_lifecycle_conversation(monkeypatch)
-    monkeypatch.setattr(lifecycle_service.jobs_db, 'create_or_get_finalization_intent', MagicMock(return_value=intent))
+    create = MagicMock(return_value=intent)
+    monkeypatch.setattr(lifecycle_service.jobs_db, 'create_or_get_finalization_intent', create)
     monkeypatch.setattr(lifecycle_service, 'is_listen_finalization_dispatch_enabled', lambda: True)
     monkeypatch.setattr(lifecycle_service, 'enqueue_listen_finalization_job', enqueue)
 
@@ -253,7 +254,7 @@ def test_enqueue_failure_leaves_job_queued_for_reconciler(monkeypatch):
 def test_required_cloud_tasks_rejects_rest_admission_before_outbox_mutation(monkeypatch):
     create = MagicMock()
     monkeypatch.setattr(lifecycle_service.jobs_db, 'create_or_get_finalization_intent', create)
-    monkeypatch.setattr(lifecycle_service, 'is_listen_finalization_dispatch_configured', lambda: False)
+    monkeypatch.setattr(lifecycle_service, 'is_finalization_worker_configured', lambda: False)
 
     with pytest.raises(lifecycle_service.FinalizationDispatchUnavailable):
         lifecycle_service.request_finalization(
@@ -264,6 +265,28 @@ def test_required_cloud_tasks_rejects_rest_admission_before_outbox_mutation(monk
         )
 
     create.assert_not_called()
+
+
+def test_required_cloud_tasks_dispatches_without_switching_live_listen_mode(monkeypatch):
+    intent = {'job_id': 'job-1', 'status': 'queued', 'dispatch_generation': 2, 'requires_byok': False}
+    enqueue = MagicMock()
+    _mock_lifecycle_conversation(monkeypatch)
+    create = MagicMock(return_value=intent)
+    monkeypatch.setattr(lifecycle_service.jobs_db, 'create_or_get_finalization_intent', create)
+    monkeypatch.setattr(lifecycle_service, 'is_finalization_worker_configured', lambda: True)
+    monkeypatch.setattr(lifecycle_service, 'is_listen_finalization_dispatch_enabled', lambda: False)
+    monkeypatch.setattr(lifecycle_service, 'enqueue_listen_finalization_job', enqueue)
+
+    result = lifecycle_service.request_finalization(
+        'uid-1',
+        'conversation-1',
+        has_byok_keys=False,
+        require_cloud_tasks=True,
+    )
+
+    assert result['route'] == 'cloud_tasks'
+    assert create.call_args.kwargs['dispatch_scope'] == 'exact_id'
+    enqueue.assert_called_once_with('job-1', 2)
 
 
 def test_durable_finalization_maps_exhausted_firestore_contention_to_retryable_admission_failure(monkeypatch):

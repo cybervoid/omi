@@ -22,6 +22,7 @@ from database.firestore_index_registry import MEETING_RECEIPTS_DUE_QUERY
 
 CONVERSATIONS_COLLECTION = 'conversations'
 FINALIZATION_JOBS_COLLECTION = 'conversation_finalization_jobs'
+SCOPED_DISPATCHES = frozenset({'exact_id', 'stale_in_progress'})
 # This projection starts at the first release that writes terminal outcomes.
 # It intentionally does not backfill historical jobs: terminal writes for rows
 # without this generation remain durable on the job itself but cannot move the
@@ -243,6 +244,9 @@ def _create_or_get_finalization_intent_txn(
     projection_collection: Any | None = None,
     force_process: bool = False,
     extra_updates: Mapping[str, Any] | None = None,
+    recovery_cutoff: datetime | None = None,
+    recovery_user_ref: Any = None,
+    dispatch_scope: str | None = None,
 ) -> FinalizationIntent:
     """Persist finalization ownership before any pusher or task handoff."""
     conversation_snapshot = conversation_ref.get(transaction=transaction)
@@ -250,6 +254,29 @@ def _create_or_get_finalization_intent_txn(
         return _no_finalization_intent('missing')
 
     conversation = conversation_snapshot.to_dict() or {}
+    if dispatch_scope is not None and dispatch_scope not in SCOPED_DISPATCHES:
+        raise ValueError('unknown finalization dispatch scope')
+    if (recovery_cutoff is not None) != (dispatch_scope == 'stale_in_progress'):
+        raise ValueError('stale recovery cutoff and scope must be supplied together')
+    if recovery_cutoff is not None:
+        finished_at = conversation.get('finished_at')
+        if (
+            conversation.get('status') != 'in_progress'
+            or not isinstance(finished_at, datetime)
+            or finished_at.tzinfo is None
+            or finished_at >= recovery_cutoff
+        ):
+            return _no_finalization_intent('not_stale')
+        user_snapshot = recovery_user_ref.get(transaction=transaction)
+        if not getattr(user_snapshot, 'exists', False):
+            return _no_finalization_intent('missing_user')
+        user = user_snapshot.to_dict() or {}
+        byok = user.get('byok')
+        if byok is not None and not isinstance(byok, dict):
+            return _no_finalization_intent('unknown_byok')
+        # An enrolled user may have lost the session's ephemeral keys. Never
+        # turn their recovery into a platform-key job based on an expired heartbeat.
+        requires_byok = bool(byok and (byok.get('active') or byok.get('fingerprints')))
     if conversation.get('deferred'):
         return _no_finalization_intent('deferred')
     if not _conversation_has_finalization_content(uid, conversation, conversation_ref, transaction):
@@ -268,7 +295,10 @@ def _create_or_get_finalization_intent_txn(
         existing_ref = jobs_collection.document(existing_job_id)
         existing_snapshot = existing_ref.get(transaction=transaction)
         if getattr(existing_snapshot, 'exists', False):
-            return _intent_from_job(existing_job_id, existing_snapshot.to_dict() or {})
+            existing_job = existing_snapshot.to_dict() or {}
+            if dispatch_scope and existing_job.get('dispatch_scope') not in SCOPED_DISPATCHES:
+                return _no_finalization_intent('scope_mismatch')
+            return _intent_from_job(existing_job_id, existing_job)
 
     if not admission['accepted'] or not admission['fanout_key']:
         return _no_finalization_intent(admission['reason'])
@@ -279,6 +309,8 @@ def _create_or_get_finalization_intent_txn(
     job_snapshot = job_ref.get(transaction=transaction)
     if getattr(job_snapshot, 'exists', False):
         job = job_snapshot.to_dict() or {}
+        if dispatch_scope and job.get('dispatch_scope') not in SCOPED_DISPATCHES:
+            return _no_finalization_intent('scope_mismatch')
         transaction.update(
             conversation_ref,
             {
@@ -315,6 +347,10 @@ def _create_or_get_finalization_intent_txn(
     }
     if not requires_byok:
         job['reconcile_after_at'] = now + get_finalization_reconcile_stale_after()
+    if dispatch_scope is not None:
+        job['dispatch_scope'] = dispatch_scope
+        if not requires_byok:
+            job['scoped_reconcile_after_at'] = job['reconcile_after_at']
     transaction.set(job_ref, job)
     _record_projection_delta(
         transaction,
@@ -347,6 +383,8 @@ def create_or_get_finalization_intent(
     finalization_admission: Callable[[Mapping[str, Any]], FinalizationAdmission],
     force_process: bool = False,
     extra_updates: Mapping[str, Any] | None = None,
+    recovery_cutoff: datetime | None = None,
+    dispatch_scope: str | None = None,
     firestore_client: Any = None,
 ) -> FinalizationIntent:
     client = _client(firestore_client)
@@ -371,6 +409,9 @@ def create_or_get_finalization_intent(
             projection_collection=projection_collection,
             force_process=force_process,
             extra_updates=extra_updates,
+            recovery_cutoff=recovery_cutoff,
+            recovery_user_ref=client.collection('users').document(uid) if recovery_cutoff is not None else None,
+            dispatch_scope=dispatch_scope,
         )
 
     return run_with_transaction_contention_retry(
@@ -474,6 +515,11 @@ def _claim_finalization_job_txn(
             # has reclaimed its expired lease. Terminal writes must present it.
             'lease_epoch': lease_epoch,
             'reconcile_after_at': (firestore.DELETE_FIELD if bool(job.get('requires_byok')) else lease_expires_at),
+            **(
+                {'scoped_reconcile_after_at': lease_expires_at}
+                if job.get('dispatch_scope') in SCOPED_DISPATCHES and not job.get('requires_byok')
+                else {}
+            ),
             'updated_at': now,
             # The claimer owns the attempt budget: an inline (pusher) worker has
             # no Cloud Tasks retry count to fence its terminal attempt with.
@@ -544,6 +590,11 @@ def _mark_finalization_completed_txn(
             'updated_at': now,
             'lease_expires_at': now,
             'reconcile_after_at': firestore.DELETE_FIELD,
+            **(
+                {'scoped_reconcile_after_at': firestore.DELETE_FIELD}
+                if job.get('dispatch_scope') in SCOPED_DISPATCHES
+                else {}
+            ),
             'last_failure_code': None,
         },
     )
@@ -592,7 +643,7 @@ def _mark_finalization_fenced_txn(
         return False
     if job.get('fanout_status') not in (None, 'pending'):
         return False
-    transaction.update(job_ref, _fenced_finalization_update(now))
+    transaction.update(job_ref, _fenced_finalization_update(now, job))
     _record_projection_delta(transaction, projection_collection, job, leased=-1, completed=1, stale=1)
     return True
 
@@ -622,7 +673,7 @@ def _fanout_key(job: dict[str, Any]) -> str:
     return f"conversation:{job.get('conversation_id', '')}:finalization:{int(job.get('finalization_revision') or 1)}"
 
 
-def _fenced_finalization_update(now: datetime) -> dict[str, Any]:
+def _fenced_finalization_update(now: datetime, job: Mapping[str, Any] | None = None) -> dict[str, Any]:
     """Return the terminal no-fanout state shared by every fencing boundary."""
     return {
         'status': 'completed',
@@ -630,6 +681,11 @@ def _fenced_finalization_update(now: datetime) -> dict[str, Any]:
         'updated_at': now,
         'lease_expires_at': now,
         'reconcile_after_at': firestore.DELETE_FIELD,
+        **(
+            {'scoped_reconcile_after_at': firestore.DELETE_FIELD}
+            if (job or {}).get('dispatch_scope') in SCOPED_DISPATCHES
+            else {}
+        ),
         'last_failure_code': None,
         'finalization_outcome': 'fenced',
         'terminal_outcome': 'stale',
@@ -683,7 +739,7 @@ def _claim_finalization_fanout_txn(
     uid = job.get('uid')
     conversation_id = job.get('conversation_id')
     if not isinstance(uid, str) or not uid or not isinstance(conversation_id, str) or not conversation_id:
-        transaction.update(job_ref, _fenced_finalization_update(now))
+        transaction.update(job_ref, _fenced_finalization_update(now, job))
         _record_projection_delta(transaction, projection_collection, job, leased=-1, completed=1, stale=1)
         return _fanout_claim('fenced', fanout_key)
 
@@ -691,7 +747,7 @@ def _claim_finalization_fanout_txn(
     conversation_snapshot = conversation_ref.get(transaction=transaction)
     conversation = conversation_snapshot.to_dict() if getattr(conversation_snapshot, 'exists', False) else None
     if not isinstance(conversation, Mapping) or not _conversation_admits_fanout(conversation, job, job_ref.id):
-        transaction.update(job_ref, _fenced_finalization_update(now))
+        transaction.update(job_ref, _fenced_finalization_update(now, job))
         _record_projection_delta(transaction, projection_collection, job, leased=-1, completed=1, stale=1)
         return _fanout_claim('fenced', fanout_key)
 
@@ -800,6 +856,11 @@ def _mark_finalization_retryable_txn(
                 if bool(job.get('requires_byok'))
                 else now + get_finalization_reconcile_stale_after()
             ),
+            **(
+                {'scoped_reconcile_after_at': now + get_finalization_reconcile_stale_after()}
+                if job.get('dispatch_scope') in SCOPED_DISPATCHES and not job.get('requires_byok')
+                else {}
+            ),
             'last_failure_code': failure_code,
         },
     )
@@ -872,6 +933,11 @@ def _mark_finalization_dead_letter_txn(
             'terminal_outcome': 'failure',
             'lease_expires_at': now,
             'reconcile_after_at': firestore.DELETE_FIELD,
+            **(
+                {'scoped_reconcile_after_at': firestore.DELETE_FIELD}
+                if job.get('dispatch_scope') in SCOPED_DISPATCHES
+                else {}
+            ),
             'task_retry_count': retry_count,
             'last_failure_code': 'final_attempt_failed',
         },
@@ -1222,6 +1288,7 @@ def _claim_finalization_replay_txn(
     stale_after: timedelta,
     now: datetime,
     projection_collection: Any | None = None,
+    required_scope: str | None = None,
 ) -> FinalizationIntent:
     snapshot = job_ref.get(transaction=transaction)
     if not getattr(snapshot, 'exists', False):
@@ -1234,6 +1301,10 @@ def _claim_finalization_replay_txn(
             'created': False,
         }
     job = snapshot.to_dict() or {}
+    if required_scope is not None and (
+        required_scope not in SCOPED_DISPATCHES or job.get('dispatch_scope') != required_scope
+    ):
+        return _no_finalization_intent('scope_mismatch')
     status = str(job.get('status') or '')
     if status == 'blocked_byok' or status in TERMINAL_JOB_STATUSES:
         return _intent_from_job(snapshot.id, job)
@@ -1258,6 +1329,11 @@ def _claim_finalization_replay_txn(
             'updated_at': now,
             'lease_expires_at': now,
             'reconcile_after_at': now + stale_after,
+            **(
+                {'scoped_reconcile_after_at': now + stale_after}
+                if job.get('dispatch_scope') in SCOPED_DISPATCHES
+                else {}
+            ),
         },
     )
     if status == 'leased':
@@ -1268,7 +1344,7 @@ def _claim_finalization_replay_txn(
 
 
 def claim_finalization_replay(
-    job_id: str, *, stale_after: timedelta, firestore_client: Any = None
+    job_id: str, *, stale_after: timedelta, firestore_client: Any = None, required_scope: str | None = None
 ) -> FinalizationIntent:
     client = _client(firestore_client)
     transaction = client.transaction()
@@ -1279,6 +1355,7 @@ def claim_finalization_replay(
         stale_after,
         _now(),
         client.collection(FINALIZATION_PROJECTION_COLLECTION),
+        required_scope,
     )
 
 
@@ -1293,6 +1370,62 @@ def get_finalization_replay_candidates(*, limit: int = 100, firestore_client: An
         if job.get('status') in {'queued', 'leased'}:
             result.append(job | {'job_id': snapshot.id})
     return result
+
+
+def get_scoped_replay_candidates(*, limit: int = 100, firestore_client: Any = None) -> list[dict[str, Any]]:
+    """Due exact-ID and stale-recovery jobs, using their dedicated single-field index."""
+    query = (
+        _client(firestore_client)
+        .collection(FINALIZATION_JOBS_COLLECTION)
+        .where('scoped_reconcile_after_at', '<=', _now())
+        .limit(max(1, min(limit, 100)))
+    )
+    return [(snapshot.to_dict() or {}) | {'job_id': snapshot.id} for snapshot in query.stream()]
+
+
+def get_stale_in_progress_recovery_page(
+    *, limit: int, resume_after_path: str | None, firestore_client: Any = None
+) -> dict[str, Any]:
+    """Bounded rotating scan; the transaction, not this discovery query, decides eligibility."""
+    client = _client(firestore_client)
+    query = (
+        client.collection_group(CONVERSATIONS_COLLECTION)
+        .where(filter=firestore.FieldFilter('status', '==', 'in_progress'))
+        .limit(max(1, min(limit, 100)))
+    )
+    if resume_after_path:
+        cursor = client.document(resume_after_path).get()
+        if getattr(cursor, 'exists', False):
+            query = query.start_after(cursor)
+    page = list(query.stream())
+    candidates = []
+    for snapshot in page:
+        uid = _uid_from_conversation_path(snapshot.reference.path)
+        if uid:
+            candidates.append({'uid': uid, 'conversation_id': snapshot.id})
+    return {
+        'candidates': candidates,
+        'resume_after_path': page[-1].reference.path if len(page) == max(1, min(limit, 100)) else None,
+    }
+
+
+def get_in_progress_recovery_cursor(*, firestore_client: Any = None) -> dict[str, Any]:
+    snapshot = (
+        _client(firestore_client).collection('conversation_recovery_state').document('stale_in_progress_sweep').get()
+    )
+    data = (snapshot.to_dict() or {}) if getattr(snapshot, 'exists', False) else {}
+    return {'resume_after_path': data.get('resume_after_path'), 'generation': int(data.get('generation') or 0)}
+
+
+def advance_in_progress_recovery_cursor(generation: int, path: str | None, *, firestore_client: Any = None) -> bool:
+    client = _client(firestore_client)
+    return firestore.transactional(_advance_stale_processing_sweep_cursor_txn)(
+        client.transaction(),
+        client.collection('conversation_recovery_state').document('stale_in_progress_sweep'),
+        generation,
+        path,
+        _now(),
+    )
 
 
 def get_stale_processing_orphan_candidates(

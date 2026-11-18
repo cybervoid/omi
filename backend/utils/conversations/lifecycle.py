@@ -22,7 +22,7 @@ from database.firestore_transaction_retry import FirestoreContentionExhausted
 from models.conversation_enums import ConversationStatus
 from utils.cloud_tasks import (
     enqueue_listen_finalization_job,
-    is_listen_finalization_dispatch_configured,
+    is_finalization_worker_configured,
     is_listen_finalization_dispatch_enabled,
 )
 from utils.conversations.finalization_decision import (
@@ -644,6 +644,14 @@ def _finalization_admission(
     }
 
 
+def finalization_admission(
+    conversation: Mapping[str, Any],
+    conversation_id: str,
+) -> jobs_db.FinalizationAdmission:
+    """Expose the lifecycle-owned admission decision to trusted recovery drivers."""
+    return _finalization_admission(conversation, conversation_id)
+
+
 def claim_finalization_fanout(
     job_id: str, dispatch_generation: int, lease_epoch: int
 ) -> jobs_db.FinalizationFanoutClaim:
@@ -680,7 +688,7 @@ def request_finalization(
     firestore_client: Any = None,
 ) -> dict[str, Any]:
     """Atomically admit finalization and choose its sole durable handoff route."""
-    if require_cloud_tasks and not is_listen_finalization_dispatch_configured():
+    if require_cloud_tasks and not is_finalization_worker_configured():
         # A REST request has no pusher session to execute an inline handoff.
         # Reject before mutating the conversation instead of persisting work
         # that this deployment cannot recover or dispatch.
@@ -694,6 +702,7 @@ def request_finalization(
             finalization_admission=lambda conversation: _finalization_admission(conversation, conversation_id),
             force_process=force_process,
             extra_updates=extra_updates,
+            dispatch_scope='exact_id' if require_cloud_tasks else None,
             firestore_client=firestore_client,
         )
     except FirestoreContentionExhausted as error:
@@ -705,6 +714,8 @@ def request_finalization(
     if intent.get('created'):
         record_journey_accepted('capture_finalization')
     status = intent['status']
+    if status == 'scope_mismatch':
+        raise FinalizationDispatchUnavailable('existing finalization job is not scoped for durable replay')
     if intent['job_id'] is None or status in {'missing', 'no_content', 'deferred', 'completed', 'dead_letter'}:
         return dict(intent) | {'route': 'noop'}
 
@@ -722,7 +733,7 @@ def request_finalization(
         resumed = jobs_db.resume_blocked_byok_job_for_live_session(intent['job_id'], firestore_client=firestore_client)
         return dict(resumed) | {'route': 'pusher'}
 
-    if not is_listen_finalization_dispatch_enabled():
+    if not require_cloud_tasks and not is_listen_finalization_dispatch_enabled():
         return dict(intent) | {'route': 'pusher'}
 
     try:

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import os
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from google.api_core.exceptions import InvalidArgument
@@ -20,6 +21,7 @@ from utils.cloud_tasks import (
     enqueue_listen_finalization_job,
     get_listen_finalization_tasks_max_attempts,
     is_listen_finalization_dispatch_enabled,
+    is_finalization_worker_configured,
 )
 from utils.metrics import (
     LISTEN_FINALIZATION_DEAD_LETTER_TOTAL,
@@ -40,6 +42,109 @@ from utils.observability.journeys import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def reconcile_scoped_finalization_jobs(limit: int = 100, *, firestore_client: Any = None) -> dict[str, int]:
+    """Replay only exact-ID and stale-recovery jobs, independently of live mode."""
+    result = {'requeued': 0, 'skipped': 0, 'error': 0}
+    if not is_finalization_worker_configured():
+        return result
+    try:
+        due = jobs_db.get_scoped_replay_candidates(limit=limit, firestore_client=firestore_client)
+        for candidate in due:
+            job_id = candidate.get('job_id')
+            scope = candidate.get('dispatch_scope')
+            if (
+                not isinstance(job_id, str)
+                or not job_id
+                or not isinstance(scope, str)
+                or scope not in jobs_db.SCOPED_DISPATCHES
+            ):
+                result['skipped'] += 1
+                continue
+            try:
+                intent = jobs_db.claim_finalization_replay(
+                    job_id,
+                    stale_after=jobs_db.get_finalization_reconcile_stale_after(),
+                    firestore_client=firestore_client,
+                    required_scope=scope,
+                )
+                if intent['status'] == 'queued' and intent['dispatch_generation'] is not None:
+                    enqueue_listen_finalization_job(job_id, int(intent['dispatch_generation']))
+                    result['requeued'] += 1
+            except Exception:
+                logger.exception('scoped finalization replay failed job=%s', job_id)
+                result['error'] += 1
+    except Exception:
+        logger.exception('scoped finalization replay query failed')
+        result['error'] += 1
+    return result
+
+
+def reconcile_abandoned_in_progress(limit: int = 100, *, firestore_client: Any = None) -> dict[str, int]:
+    """Admit stale recordings without deleting rows or altering Redis pointers."""
+    result = {'admitted': 0, 'skipped': 0, 'error': 0}
+    if os.getenv('STALE_IN_PROGRESS_RECOVERY_ENABLED', 'false').strip().lower() not in {'1', 'true', 'yes', 'on'}:
+        return result
+    if not is_finalization_worker_configured():
+        logger.error('stale in-progress recovery worker is not configured')
+        result['error'] += 1
+        return result
+    # Import here to avoid the lifecycle -> finalization service dependency cycle.
+    from utils.conversations import lifecycle
+
+    try:
+        cursor = jobs_db.get_in_progress_recovery_cursor(firestore_client=firestore_client)
+        page = jobs_db.get_stale_in_progress_recovery_page(
+            limit=limit,
+            resume_after_path=cursor['resume_after_path'],
+            firestore_client=firestore_client,
+        )
+    except Exception:
+        logger.exception('stale in-progress recovery scan failed')
+        result['error'] += 1
+        return result
+
+    try:
+        seconds = max(900, int(os.getenv('STALE_IN_PROGRESS_RECOVERY_THRESHOLD_SECONDS', '900')))
+    except ValueError:
+        seconds = 900
+    cutoff = datetime.now(timezone.utc) - timedelta(seconds=seconds)
+    for candidate in page['candidates']:
+        uid, conversation_id = candidate['uid'], candidate['conversation_id']
+        try:
+            intent = jobs_db.create_or_get_finalization_intent(
+                uid,
+                conversation_id,
+                requires_byok=False,
+                finalization_admission=lambda conversation: lifecycle.finalization_admission(
+                    conversation, conversation_id
+                ),
+                recovery_cutoff=cutoff,
+                dispatch_scope='stale_in_progress',
+                firestore_client=firestore_client,
+            )
+            if intent['created']:
+                result['admitted'] += 1
+                if intent['status'] == 'queued':
+                    job_id = intent.get('job_id')
+                    dispatch_generation = intent.get('dispatch_generation')
+                    if not isinstance(job_id, str) or not isinstance(dispatch_generation, int):
+                        raise RuntimeError('scoped finalization admission returned an invalid dispatch identity')
+                    enqueue_listen_finalization_job(job_id, dispatch_generation)
+            else:
+                result['skipped'] += 1
+        except Exception:
+            logger.exception('stale in-progress recovery admission or enqueue failed')
+            result['error'] += 1
+    try:
+        jobs_db.advance_in_progress_recovery_cursor(
+            cursor['generation'], page['resume_after_path'], firestore_client=firestore_client
+        )
+    except Exception:
+        logger.exception('stale in-progress recovery cursor update failed')
+        result['error'] += 1
+    return result
 
 
 def is_meeting_receipt_reconciler_enabled() -> bool:

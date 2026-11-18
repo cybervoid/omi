@@ -13,7 +13,7 @@ changes as commits on top of a pinned upstream baseline.
 ## What's on this branch (vs. upstream)
 - **`backend/`** — the upstream backend plus three self-host patches:
   - GCS V4 signed URLs via IAM **SignBlob**, so audio playback works on a **keyless** GCE VM (attached service account, no exported JSON key).
-  - A **stale-conversation finalizer** (`backend/scripts/finalize_stale_conversations.py`), run from cron to close conversations stuck in `in_progress`.
+  - The old stale-conversation cron has been retired. See [durable recovery](../backend/docs/operations/stale-in-progress-recovery.md); do not reapply patch 0002 or schedule its script.
   - An **app-update feed** (`backend/routers/app_update.py`): auth-gated `GET /v2/app/android/latest` + `/v2/app/android/download` that serve the self-host APK + metadata to the in-app updater (no embedded secrets).
 - **`selfhost/diarizer/`** — a serverless speaker-embedding service deployed to GCP Cloud Run that replaces Omi's hosted `diarizer`. See [`diarizer/README.md`](diarizer/README.md).
 - **`.github/workflows/`** — CI that builds the backend image and watches upstream (below).
@@ -96,12 +96,10 @@ $DC exec -T redis redis-cli ping                               # -> PONG
 DIARIZER_URL=$($DC exec -T backend printenv HOSTED_SPEAKER_EMBEDDING_API_URL | tr -d '\r')
 curl -s "$DIARIZER_URL/health"                                 # -> {"status":"healthy"}
 $DC logs pusher 2>&1 | grep "Application startup complete"     # pusher booted
-$DC exec -T backend python -m scripts.finalize_stale_conversations --dry-run   # Firestore + patch 0002
 $DC logs --since 10m backend 2>&1 | grep -iE "error|traceback" || echo "no errors"
 ```
 Expect: Redis `PONG`; the diarizer `/health` healthy (Cloud Run reachable); the pusher
-startup line present; the finalizer printing `Sweep start … / Sweep done …` (proves Firestore
-connectivity and exercises patch 0002); and no errors in recent backend logs.
+startup line present and no errors in recent backend logs. The retired script is not a Firestore smoke test.
 ### Latest run — 2026-07-05 (post upstream rebase → `1.0.542`)
 All checks **passed** on `ghcr.io/cybervoid/omi-backend:latest` after rebasing the self-host patches onto upstream `b61b0141` (app `1.0.542`, versionCode 978). One missing Firestore index surfaced and was fixed (last bullet).
 - Public: `/docs` 200, `/openapi.json` 200 (**371 routes**), `/v1/conversations` 401, `/v1/conversations/count` 401, `/v2/app/android/latest` 401.
@@ -120,8 +118,8 @@ git fetch upstream
 git rebase upstream/main          # or a release tag; resolve any conflicts in the patch commits
 git push --force-with-lease origin selfhost
 ```
-After it deploys, re-verify with the **Smoke test** section above (it covers the SignBlob audio path,
-the finalizer `--dry-run`, and the diarizer round-trip). Watch for new required env keys and new
+After it deploys, re-verify with the **Smoke test** section above (it covers the SignBlob audio path
+and the diarizer round-trip). Watch for new required env keys and new
 Firestore composite indexes.
 
 ### Cloud Run diarizer

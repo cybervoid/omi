@@ -70,7 +70,7 @@ Secrets live in your **password manager**, never in this bundle.
 
 ## 2. Local modifications (keep as re-appliable diffs)
 - `patches/0001-storage-signed-url-iam-signblob.patch` — GCS V4 URL signing via IAM SignBlob (keyless GCE).
-- `patches/0002-stale-conversation-finalizer.patch` — `backend/scripts/finalize_stale_conversations.py` (cron at `/etc/cron.d/omi-finalizer`).
+- Patch 0002 and its cron are retired: do not reapply or schedule them. See `backend/docs/operations/stale-in-progress-recovery.md` for the opt-in durable replacement.
 - `patches/0003-app-update-endpoint.patch` — backend-mediated, Firebase-auth'd app-update feed (`backend/routers/app_update.py` + `backend/main.py`): `GET /v2/app/android/latest` + `/v2/app/android/download`, serving the APK + `latest.json` from `APP_UPDATES_DIR` (the `app-updates/` mount). See §7e.
 - `diarizer/` — standalone; not a patch to upstream. Notable pins: pyannote.audio 3.x, `huggingface_hub<1.0`, `weights_only=False`, CPU-only (`CUDA_VISIBLE_DEVICES=""`).
 Each is a candidate to **contribute upstream** (esp. 0001) so the fork stays thin.
@@ -78,8 +78,8 @@ Each is a candidate to **contribute upstream** (esp. 0001) so the fork stays thi
 ## 3. Rebuild from scratch (order)
 1. **GCP/Firebase**: recreate project resources from the Inventory (or reuse the existing project). If reusing, skip — only the VM/app are ephemeral.
 2. **VM**: create `omi-backend` (e2-medium, Ubuntu 22.04, static IP, attached SA, the firewall rules above, Docker + compose)
-3. **Backend**: `git clone --filter=blob:none --sparse https://github.com/BasedHardware/omi.git ~/omi && cd ~/omi && git sparse-checkout set backend app && git checkout a65987c` (or newer — see §4). Apply patches: `git apply ~/omi-deploy/patches/0001-*.patch ~/omi-deploy/patches/0002-*.patch ~/omi-deploy/patches/0003-*.patch`.
-4. **Deploy files**: put `docker-compose.yml`, `Caddyfile`, `patches/`, and `.env` (with secrets from the password manager; `GOOGLE_APPLICATION_CREDENTIALS` UNSET) in `~/omi-deploy/`. `cd ~/omi-deploy && sudo docker compose up -d --build`. Re-add the finalizer cron (`/etc/cron.d/omi-finalizer`).
+3. **Backend**: `git clone --filter=blob:none --sparse https://github.com/BasedHardware/omi.git ~/omi && cd ~/omi && git sparse-checkout set backend app && git checkout a65987c` (or newer — see §4). Apply patches 0001 and 0003, not retired patch 0002.
+4. **Deploy files**: put `docker-compose.yml`, `Caddyfile`, `patches/`, and `.env` (with secrets from the password manager; `GOOGLE_APPLICATION_CREDENTIALS` UNSET) in `~/omi-deploy/`. `cd ~/omi-deploy && sudo docker compose up -d --build`. Do not re-add the retired finalizer cron.
 5. **Diarizer (Cloud Run)**: deploy the `omi-diarizer` container to GCP Cloud Run. Ensure `HOSTED_SPEAKER_EMBEDDING_API_URL` in the backend `.env` points to the Cloud Run service URL.
 6. **App**: install the toolchain, set `app/.dev.env` `API_BASE_URL`, restore the dev Firebase config + release keystore/key.properties, `flutter build apk --flavor dev --release`, sideload to the Pixel. Preferred ongoing path: trigger `build-app.yml`, then publish with `./publish-app-update.sh <github-run-id>` and install from the VM endpoint.
 7. Verify: `curl https://35.223.15.33.sslip.io/docs`; run §4e (deploy Firestore indexes from `firestore.indexes.json` + `check_selfhost_health`); pair the CV1, speak, confirm a conversation lands in Firestore; send **one app chat message** and confirm a normal reply (not a generic error / `POST /v2/messages` 500).
@@ -96,8 +96,8 @@ git push --force-with-lease origin selfhost   # build-backend CI rebuilds + push
 cd ~/omi-deploy && ./pull-deploy.sh           # VM pulls the new image (no local build)
 ```
 - If a patch-commit conflicts during the rebase, upstream changed that file — resolve in place, `git rebase --continue`, and refresh the mirror in `deploy/patches/` (then re-tar the bundle).
-- After upgrades, re-verify: `/docs` 200, audio playback (the 0001 path), the finalizer (`docker compose exec backend python -m scripts.finalize_stale_conversations --dry-run`), a speaker embedding round-trip, **and one real app chat send** (`POST /v2/messages` must not 500 — see §4e). Also run §4e index deploy + health check **before** calling the upgrade done.
-- Patches-as-diffs fallback (no fork): fresh checkout at the new tag + `git apply --3way ~/omi-deploy/patches/0001-*.patch ~/omi-deploy/patches/0002-*.patch ~/omi-deploy/patches/0003-*.patch`, then `docker compose up -d --build`.
+- After upgrades, re-verify: `/docs` 200, audio playback (the 0001 path), a speaker embedding round-trip, **and one real app chat send** (`POST /v2/messages` must not 500 — see §4e). Also run §4e index deploy + health check **before** calling the upgrade done.
+- Patches-as-diffs fallback (no fork): fresh checkout at the new tag + `git apply --3way ~/omi-deploy/patches/0001-*.patch ~/omi-deploy/patches/0003-*.patch`, then `docker compose up -d --build`.
 
 ### b. App updates
 Pull the same commit, rebuild the APK with **your** Firebase config + `API_BASE_URL` + release keystore (never run `flutterfire configure` — it overwrites prod creds). Preferred flow:

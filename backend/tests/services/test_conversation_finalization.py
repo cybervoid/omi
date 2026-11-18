@@ -118,6 +118,69 @@ def test_reconcile_listen_finalization_jobs_success(mock_dependencies):
     mock_dependencies["publish_metrics"].assert_called_once()
 
 
+def test_abandoned_recovery_fails_closed_when_worker_unavailable(monkeypatch):
+    monkeypatch.setenv('STALE_IN_PROGRESS_RECOVERY_ENABLED', 'true')
+    monkeypatch.setattr(conversation_finalization, 'is_finalization_worker_configured', lambda: False)
+    scan = mock.Mock()
+    monkeypatch.setattr(conversation_finalization.jobs_db, 'get_stale_in_progress_recovery_page', scan)
+    assert conversation_finalization.reconcile_abandoned_in_progress()['error'] == 1
+    scan.assert_not_called()
+
+
+def test_abandoned_recovery_dispatch_and_enqueue_failure_are_scoped(monkeypatch):
+    monkeypatch.setenv('STALE_IN_PROGRESS_RECOVERY_ENABLED', 'true')
+    monkeypatch.setenv('LISTEN_FINALIZATION_DISPATCH_MODE', 'inline')
+    monkeypatch.setattr(conversation_finalization, 'is_finalization_worker_configured', lambda: True)
+    db = conversation_finalization.jobs_db
+    monkeypatch.setattr(
+        db, 'get_in_progress_recovery_cursor', lambda **kw: {'generation': 0, 'resume_after_path': None}
+    )
+    monkeypatch.setattr(
+        db,
+        'get_stale_in_progress_recovery_page',
+        lambda **kw: {
+            'candidates': [{'uid': 'u', 'conversation_id': 'c'}],
+            'resume_after_path': None,
+        },
+    )
+    monkeypatch.setattr(db, 'advance_in_progress_recovery_cursor', lambda *a, **kw: True)
+    create = mock.Mock(
+        return_value={'created': True, 'status': 'queued', 'job_id': 'new-job', 'dispatch_generation': 1}
+    )
+    monkeypatch.setattr(db, 'create_or_get_finalization_intent', create)
+    enqueue = mock.Mock(side_effect=RuntimeError('worker unavailable'))
+    monkeypatch.setattr(conversation_finalization, 'enqueue_listen_finalization_job', enqueue)
+    result = conversation_finalization.reconcile_abandoned_in_progress()
+    assert result['admitted'] == 1 and result['error'] == 1
+    assert create.call_args.kwargs['recovery_cutoff'] is not None
+    assert create.call_args.kwargs['dispatch_scope'] == 'stale_in_progress'
+    enqueue.assert_called_once_with('new-job', 1)
+
+
+def test_scoped_replay_runs_with_stale_admission_and_live_dispatch_disabled(monkeypatch):
+    monkeypatch.setenv('STALE_IN_PROGRESS_RECOVERY_ENABLED', 'false')
+    monkeypatch.setenv('LISTEN_FINALIZATION_DISPATCH_MODE', 'inline')
+    monkeypatch.setattr(conversation_finalization, 'is_finalization_worker_configured', lambda: True)
+    db = conversation_finalization.jobs_db
+    monkeypatch.setattr(
+        db,
+        'get_scoped_replay_candidates',
+        lambda **kw: [
+            {'job_id': 'exact', 'dispatch_scope': 'exact_id'},
+            {'job_id': 'recovery', 'dispatch_scope': 'stale_in_progress'},
+            {'job_id': 'unrelated'},
+        ],
+    )
+    claim = mock.Mock(return_value={'status': 'queued', 'dispatch_generation': 2})
+    enqueue = mock.Mock()
+    monkeypatch.setattr(db, 'claim_finalization_replay', claim)
+    monkeypatch.setattr(conversation_finalization, 'enqueue_listen_finalization_job', enqueue)
+    result = conversation_finalization.reconcile_scoped_finalization_jobs()
+    assert result == {'requeued': 2, 'skipped': 1, 'error': 0}
+    assert [c.kwargs['required_scope'] for c in claim.call_args_list] == ['exact_id', 'stale_in_progress']
+    assert enqueue.call_args_list == [mock.call('exact', 2), mock.call('recovery', 2)]
+
+
 def _stub_meeting_backfill(monkeypatch, candidates=None):
     monkeypatch.setattr(
         conversation_finalization.jobs_db,

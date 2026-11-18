@@ -127,7 +127,12 @@ def is_listen_finalization_dispatch_enabled() -> bool:
 
 def is_listen_finalization_dispatch_configured() -> bool:
     """Whether the durable finalizer can be admitted without an inline fallback."""
-    return is_listen_finalization_dispatch_enabled() and all(
+    return is_listen_finalization_dispatch_enabled() and is_finalization_worker_configured()
+
+
+def is_finalization_worker_configured() -> bool:
+    """Bindings shared by independently enabled exact-ID dispatchers."""
+    return all(
         (
             os.getenv('SYNC_TASKS_PROJECT', ''),
             os.getenv('SYNC_TASKS_LOCATION', ''),

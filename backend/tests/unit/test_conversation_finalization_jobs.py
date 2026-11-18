@@ -100,6 +100,144 @@ def _admit_finalization(_conversation_data: dict) -> jobs.FinalizationAdmission:
     }
 
 
+def _recover(transaction, conversation, collection, *, user=None):
+    return jobs._create_or_get_finalization_intent_txn(
+        transaction,
+        conversation,
+        collection,
+        'uid-1',
+        'conversation-1',
+        False,
+        _admit_finalization,
+        _now(),
+        recovery_cutoff=_now() - timedelta(minutes=15),
+        recovery_user_ref=user or _Ref('uid-1', {}),
+        dispatch_scope='stale_in_progress',
+    )
+
+
+def test_abandoned_recording_creates_exact_scoped_durable_job_once():
+    conversation = _conversation({'finished_at': _now() - timedelta(hours=1)})
+    collection = _Collection({})
+    transaction = _Transaction()
+    intent = _recover(transaction, conversation, collection)
+    job_ref, job = transaction.sets[0]
+    assert intent['created'] and job['conversation_id'] == 'conversation-1'
+    assert job['dispatch_scope'] == 'stale_in_progress'
+    assert job['scoped_reconcile_after_at'] == job['reconcile_after_at']
+    job_ref.data = job
+    conversation.data.update(transaction.updates[0][1])
+    retry = _Transaction()
+    assert _recover(retry, conversation, collection)['status'] == 'not_stale'
+    assert retry.sets == [] and retry.updates == []
+
+
+def test_resume_during_sweep_and_unknown_timestamp_are_never_admitted():
+    for finished_at in (_now(), None, 'unknown', datetime(2020, 1, 1)):
+        transaction = _Transaction()
+        intent = _recover(transaction, _conversation({'finished_at': finished_at}), _Collection({}))
+        assert intent['status'] == 'not_stale'
+        assert not transaction.sets and not transaction.updates
+
+
+def test_photo_only_and_late_content_are_not_deleted_or_lost():
+    old = _now() - timedelta(hours=1)
+    empty = _conversation({'finished_at': old, 'transcript_segments': []})
+    transaction = _Transaction()
+    assert _recover(transaction, empty, _Collection({}))['status'] == 'no_content'
+    assert not transaction.sets and not transaction.updates
+    empty.has_legacy_photo = True
+    assert _recover(_Transaction(), empty, _Collection({}))['created']
+    empty.has_legacy_photo = False
+    empty.data['transcript_segments'] = [{'text': 'late content'}]
+    assert _recover(_Transaction(), empty, _Collection({}))['created']
+
+
+def test_recovery_blocks_enrolled_byok_without_assuming_session_keys():
+    conversation = _conversation({'finished_at': _now() - timedelta(hours=1)})
+    transaction = _Transaction()
+    intent = _recover(transaction, conversation, _Collection({}), user=_Ref('uid-1', {'byok': {'active': True}}))
+    assert intent['status'] == 'blocked_byok'
+    assert 'scoped_reconcile_after_at' not in transaction.sets[0][1]
+
+
+def test_exact_id_outbox_job_has_scoped_due_index_but_live_job_does_not():
+    for scope in ('exact_id', None):
+        transaction = _Transaction()
+        jobs._create_or_get_finalization_intent_txn(
+            transaction,
+            _conversation(),
+            _Collection({}),
+            'uid-1',
+            'conversation-1',
+            False,
+            _admit_finalization,
+            _now(),
+            dispatch_scope=scope,
+        )
+        job = transaction.sets[0][1]
+        if scope:
+            assert job['dispatch_scope'] == scope
+            assert job['scoped_reconcile_after_at'] == job['reconcile_after_at']
+        else:
+            assert 'dispatch_scope' not in job and 'scoped_reconcile_after_at' not in job
+
+
+def test_exact_id_request_does_not_adopt_an_unscoped_live_job():
+    conversation = _conversation({'finalization_job_id': 'live-job'})
+    collection = _Collection({'live-job': _Ref('live-job', {'status': 'queued'})})
+    transaction = _Transaction()
+    intent = jobs._create_or_get_finalization_intent_txn(
+        transaction,
+        conversation,
+        collection,
+        'uid-1',
+        'conversation-1',
+        False,
+        _admit_finalization,
+        _now(),
+        dispatch_scope='exact_id',
+    )
+    assert intent['status'] == 'scope_mismatch'
+    assert not transaction.sets and not transaction.updates
+
+
+def test_scoped_replay_refuses_unrelated_job_inside_transaction():
+    transaction = _Transaction()
+    ref = _Ref('other-job', {'status': 'queued', 'dispatch_generation': 1})
+    result = jobs._claim_finalization_replay_txn(
+        transaction, ref, timedelta(minutes=5), _now(), required_scope='stale_in_progress'
+    )
+    assert result['status'] == 'scope_mismatch'
+    assert not transaction.updates
+
+
+def test_scoped_replay_fences_changed_scope_and_refreshes_only_scoped_due():
+    ref = _Ref(
+        'job',
+        {
+            'status': 'queued',
+            'dispatch_generation': 1,
+            'dispatch_scope': 'exact_id',
+            'dispatch_requested_at': _now() - timedelta(hours=1),
+        },
+    )
+    wrong_scope = _Transaction()
+    assert (
+        jobs._claim_finalization_replay_txn(
+            wrong_scope, ref, timedelta(minutes=5), _now(), required_scope='stale_in_progress'
+        )['status']
+        == 'scope_mismatch'
+    )
+    assert not wrong_scope.updates
+    right_scope = _Transaction()
+    result = jobs._claim_finalization_replay_txn(
+        right_scope, ref, timedelta(minutes=5), _now(), required_scope='exact_id'
+    )
+    assert result['dispatch_generation'] == 2
+    assert right_scope.updates[0][1]['scoped_reconcile_after_at'] == _now() + timedelta(minutes=5)
+
+
 def test_intent_persists_outbox_before_any_live_handoff_and_omits_byok_material():
     transaction = _Transaction()
     conversation_ref = _conversation()
