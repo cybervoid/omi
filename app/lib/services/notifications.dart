@@ -9,9 +9,11 @@ import 'package:awesome_notifications/awesome_notifications.dart';
 import 'package:omi/app_globals.dart';
 import 'package:omi/pages/home/home_navigation.dart';
 import 'package:omi/services/capture/capture_wedge_monitor.dart';
+import 'package:omi/services/selfhost_update/app_update_nudge.dart';
 import 'package:omi/utils/analytics/product_telemetry.dart';
 import 'package:omi/utils/l10n_extensions.dart';
 import 'package:omi/utils/logger.dart';
+import 'package:omi/widgets/selfhost_app_update_dialog.dart';
 
 // Re-export the main notification service for backward compatibility
 // All notification functionality is now handled by the platform-aware service
@@ -59,6 +61,10 @@ class NotificationUtil {
   static Future<void> onActionReceivedMethodImpl(ReceivedAction receivedAction) async {
     final payload = receivedAction.payload;
     if (payload == null || payload.isEmpty) {
+      return;
+    }
+    if (payload[SelfHostUpdateNudge.notificationPayloadKey] != null) {
+      await openSelfHostUpdateFlow();
       return;
     }
     await handleFcmDataTap(payload);

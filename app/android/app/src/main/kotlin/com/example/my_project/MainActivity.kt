@@ -75,6 +75,8 @@ class MainActivity: FlutterActivity() {
         TtsMp3DecoderPlugin.register(flutterEngine)
         ChatVideoSamplerPlugin.register(flutterEngine, this)
         TtsPcmPlayerPlugin.register(flutterEngine)
+        // Self-host updater: real installer in the dev flavor, no-op in prod.
+        com.friend.ios.selfhost.SelfHostUpdateInstaller.register(flutterEngine, this)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, NATIVE_BLE_TRANSCRIPT_CHANNEL).setMethodCallHandler {
             call, result ->
             if (call.method == "drain") {

@@ -16,9 +16,11 @@ import 'package:omi/pages/settings/settings_search_index.dart';
 import 'package:omi/providers/capture_provider.dart';
 import 'package:omi/providers/appearance_provider.dart';
 import 'package:omi/providers/device_provider.dart';
+import 'package:omi/services/selfhost_update/app_update_service.dart';
 import 'package:omi/ui/ui.dart';
 import 'package:omi/utils/l10n_extensions.dart';
 import 'package:omi/utils/platform/platform_service.dart';
+import 'package:omi/widgets/selfhost_app_update_dialog.dart';
 
 /// The Settings group pages. The Settings sheet shows Account, the five groups here, Integrations
 /// and Developer Settings; each group row opens one of these pages, which lists the rows that used
@@ -459,6 +461,7 @@ class _HelpAboutGroupPageState extends State<HelpAboutGroupPage> with _GroupRows
             if (PlatformService.isIntercomSupported)
               row(SettingsDestination.helpCenter, icon: FontAwesomeIcons.book, title: l10n.helpCenter),
             row(SettingsDestination.whatsNew, icon: FontAwesomeIcons.solidStar, title: l10n.whatsNew),
+            if (SelfHostUpdateFeature.enabled) const SelfHostCheckForUpdatesRow(),
           ],
         ),
         const SizedBox(height: OmiSpacing.xl),
