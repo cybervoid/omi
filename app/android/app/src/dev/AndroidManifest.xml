@@ -1,4 +1,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Self-host updater: dev flavor only; store builds never request install rights. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+
     <application>
         <activity android:name=".MainActivity">
             <intent-filter>
@@ -8,5 +11,15 @@
                 <data android:scheme="omi-dev" />
             </intent-filter>
         </activity>
+
+        <provider
+            android:name="com.friend.ios.selfhost.SelfHostUpdateFileProvider"
+            android:authorities="${applicationId}.selfhost_updates"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/selfhost_update_paths" />
+        </provider>
     </application>
 </manifest>

@@ -64,6 +64,7 @@ import 'package:omi/utils/platform/platform_service.dart';
 import 'package:omi/services/announcement_service.dart';
 import 'package:omi/services/account_cutover/account_cutover_blocking_gate.dart';
 import 'package:omi/services/notifications.dart';
+import 'package:omi/services/selfhost_update/app_update_nudge.dart';
 import 'package:omi/services/wals/recording_transfer_coordinator.dart';
 import 'package:omi/utils/other/temp.dart';
 import 'package:omi/utils/audio/foreground.dart';
@@ -418,6 +419,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver, Ticker
         if (context.read<HomeProvider>().selectedIndex == HomeProvider.tasksTab) {
           unawaited(context.read<ActionItemsProvider>().forceRefreshActionItems());
         }
+        unawaited(SelfHostUpdateNudge.instance.maybeCheck());
       }
       // Sync Apple Reminders on foreground resume
       if (mounted && PlatformService.isApple) {
@@ -485,6 +487,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver, Ticker
     context.read<HomeProvider>().selectedIndex = homePageIdx;
     _ensurePageInitialized(homePageIdx);
     WidgetsBinding.instance.addObserver(this);
+    // Self-host builds only; bounded to one feed check per interval.
+    WidgetsBinding.instance.addPostFrameCallback((_) => unawaited(SelfHostUpdateNudge.instance.maybeCheck()));
 
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       // Android needs a foreground service to keep capture/location work alive.
