@@ -7,6 +7,7 @@ import 'environment_profile.dart';
 abstract class Env {
   static const productionApiBaseUrl = 'https://api.omi.me/';
   static const _apiBaseUrlFromDefine = String.fromEnvironment('OMI_API_BASE_URL');
+  static const selfHostedRemoteEnabled = bool.fromEnvironment('OMI_SELF_HOSTED_REMOTE');
   static const firebaseAuthEmulatorHost = String.fromEnvironment(
     'OMI_FIREBASE_AUTH_EMULATOR_HOST',
     defaultValue: '127.0.0.1',
@@ -163,14 +164,53 @@ abstract class Env {
     }
   }
 
-  static void validateFirebaseProject({required String projectId, AppEnvironmentProfile? configuredProfile}) {
+  static void validateFirebaseProject({
+    required String projectId,
+    AppEnvironmentProfile? configuredProfile,
+    String? configuredApiBaseUrl,
+    bool? publicSelfHostedEnabled,
+  }) {
     final effectiveProfile = configuredProfile ?? profile;
+    final api = (configuredApiBaseUrl ?? apiBaseUrl ?? '').trim();
+    final allowPublicSelfHost = publicSelfHostedEnabled ?? selfHostedRemoteEnabled;
+
+    // A release-signed dev flavor may target an explicitly configured public
+    // self-host. That app uses the injected real Firebase project, while the
+    // emulator project remains valid only for a local/private backend.
+    if (effectiveProfile == AppEnvironmentProfile.localDev &&
+        allowPublicSelfHost &&
+        _isSelfHostedRemoteApi(api)) {
+      if (projectId == AppEnvironmentProfile.localDev.firebaseProjectId) {
+        throw StateError(
+          'Public self-hosted local_dev requires a real Firebase project, not '
+          '${AppEnvironmentProfile.localDev.firebaseProjectId}.',
+        );
+      }
+      return;
+    }
+
     if (projectId != effectiveProfile.firebaseProjectId) {
       throw StateError(
         'Mobile profile ${effectiveProfile.name} requires Firebase project ${effectiveProfile.firebaseProjectId}, '
         'but the app was initialized with $projectId.',
       );
     }
+  }
+
+  /// True only when local_dev is paired with a local/private backend.
+  /// Public self-hosts use the real Firebase project injected at build time.
+  static bool get shouldUseFirebaseAuthEmulator => firebaseAuthEmulatorRequiredFor();
+
+  static bool firebaseAuthEmulatorRequiredFor({
+    AppEnvironmentProfile? configuredProfile,
+    String? configuredApiBaseUrl,
+    bool? publicSelfHostedEnabled,
+  }) {
+    final effectiveProfile = configuredProfile ?? profile;
+    final api = configuredApiBaseUrl ?? apiBaseUrl ?? effectiveProfile.defaultApiBaseUrl;
+    final allowPublicSelfHost = publicSelfHostedEnabled ?? selfHostedRemoteEnabled;
+    if (!effectiveProfile.usesFirebaseAuthEmulator) return false;
+    return !(allowPublicSelfHost && _isSelfHostedRemoteApi(api));
   }
 
   /// Production-family packages have one pinned backend authority. This runs
@@ -180,19 +220,22 @@ abstract class Env {
     String? configuredApiBaseUrl,
     AppEnvironmentProfile? configuredProfile,
     bool releaseBuild = kReleaseMode,
+    bool? publicSelfHostedEnabled,
   }) {
     final effectiveProfile = configuredProfile ?? (productionFamily ? AppEnvironmentProfile.production : profile);
     final normalized = (configuredApiBaseUrl ?? apiBaseUrl ?? '').trim().replaceFirst(RegExp(r'/+$'), '');
     final expected = effectiveProfile.defaultApiBaseUrl.replaceFirst(RegExp(r'/+$'), '');
+    final allowPublicSelfHost = publicSelfHostedEnabled ?? selfHostedRemoteEnabled;
 
     if (effectiveProfile == AppEnvironmentProfile.localDev) {
-      if (!_isLocalDevelopmentApi(normalized)) {
-        throw StateError(
-          'Profile local_dev requires a loopback or private-network API endpoint; '
-          'use mobile_beta for https://api.omiapi.com/.',
-        );
+      if (_isLocalDevelopmentApi(normalized) || (allowPublicSelfHost && _isSelfHostedRemoteApi(normalized))) {
+        return;
       }
-      return;
+      throw StateError(
+        'Profile local_dev requires a loopback/private-network API endpoint '
+        'or a public HTTPS self-host outside the Omi cloud serving planes. '
+        'Got: $normalized',
+      );
     }
 
     if (effectiveProfile == AppEnvironmentProfile.localProd) {
@@ -247,6 +290,17 @@ abstract class Env {
         // it either. Bounded to the real /10 — 100.63.x and 100.128.x are public.
         (first == 100 && second >= 64 && second <= 127) ||
         (first == 127);
+  }
+
+  static bool _isSelfHostedRemoteApi(String base) {
+    final uri = Uri.tryParse(base);
+    if (uri == null || uri.host.isEmpty || uri.scheme.toLowerCase() != 'https') {
+      return false;
+    }
+    if (_isLocalDevelopmentApi(base)) return false;
+    final host = uri.host.toLowerCase();
+    // Omi-owned serving planes stay pinned to their dedicated profiles.
+    return host != 'api.omi.me' && host != 'api.omiapi.com';
   }
 
   static String? get intercomAppId => _instance.intercomAppId;
