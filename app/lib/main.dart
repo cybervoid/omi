@@ -48,7 +48,6 @@ import 'package:omi/core/app_shell.dart';
 import 'package:omi/env/backend_url_override.dart';
 import 'package:omi/env/dev_env.dart';
 import 'package:omi/env/env.dart';
-import 'package:omi/env/environment_profile.dart';
 import 'package:omi/env/prod_env.dart';
 import 'package:omi/firebase_options_local.dart' as local;
 import 'package:omi/firebase_options_prod.dart' as prod;
@@ -130,7 +129,7 @@ import 'package:omi/utils/platform/platform_manager.dart';
 import 'package:omi/utils/notification_channel_strings.dart';
 
 /// Firebase parameters for the current flavor, resolved identically in every engine.
-FirebaseOptions _firebaseOptionsForFlavor() => Env.profile == AppEnvironmentProfile.localDev
+FirebaseOptions _firebaseOptionsForFlavor() => Env.shouldUseFirebaseAuthEmulator
     ? local.DefaultFirebaseOptions.currentPlatform
     : prod.DefaultFirebaseOptions.currentPlatform;
 
@@ -302,7 +301,7 @@ Future _init() async {
     );
   }
 
-  if (Env.profile.usesFirebaseAuthEmulator) {
+  if (Env.shouldUseFirebaseAuthEmulator) {
     await PhysicalQualification.startupStage(
       'auth_emulator',
       () => FirebaseAuth.instance.useAuthEmulator(Env.firebaseAuthEmulatorHost, Env.firebaseAuthEmulatorPort),

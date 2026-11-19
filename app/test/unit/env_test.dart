@@ -205,6 +205,65 @@ void main() {
       }
     });
 
+    test('local dev accepts explicit public HTTPS self-hosts', () {
+      for (final endpoint in [
+        'https://35.223.15.33.sslip.io/',
+        'https://example.ngrok-free.app/',
+        'https://omi-backend.example.com/',
+      ]) {
+        expect(
+          () => Env.validateStartupRouting(
+            productionFamily: false,
+            configuredProfile: AppEnvironmentProfile.localDev,
+            configuredApiBaseUrl: endpoint,
+            publicSelfHostedEnabled: true,
+          ),
+          returnsNormally,
+          reason: endpoint,
+        );
+      }
+    });
+
+    test('local dev rejects public HTTP and Omi cloud endpoints with self-hosting enabled', () {
+      for (final endpoint in [
+        'http://omi-backend.example.com/',
+        'https://api.omi.me/',
+        'https://api.omiapi.com/',
+      ]) {
+        expect(
+          () => Env.validateStartupRouting(
+            productionFamily: false,
+            configuredProfile: AppEnvironmentProfile.localDev,
+            configuredApiBaseUrl: endpoint,
+            publicSelfHostedEnabled: true,
+          ),
+          throwsStateError,
+          reason: endpoint,
+        );
+      }
+    });
+
+    test('public self-host rejects demo Firebase and accepts a real project', () {
+      expect(
+        () => Env.validateFirebaseProject(
+          projectId: 'demo-omi-local',
+          configuredProfile: AppEnvironmentProfile.localDev,
+          configuredApiBaseUrl: 'https://35.223.15.33.sslip.io/',
+          publicSelfHostedEnabled: true,
+        ),
+        throwsStateError,
+      );
+      expect(
+        () => Env.validateFirebaseProject(
+          projectId: 'self-host-firebase-project',
+          configuredProfile: AppEnvironmentProfile.localDev,
+          configuredApiBaseUrl: 'https://35.223.15.33.sslip.io/',
+          publicSelfHostedEnabled: true,
+        ),
+        returnsNormally,
+      );
+    });
+
     test('local prod accepts loopback, private-network, and tunnel endpoints in debug builds', () {
       for (final endpoint in [
         'http://127.0.0.1:8000/',
@@ -259,6 +318,35 @@ void main() {
         () => validateApplicationStartupRouting(
           environment: Environment.dev,
           configuredApiBaseUrl: 'https://api.omiapi.com/',
+        ),
+        throwsStateError,
+      );
+    });
+
+    test('Firebase Auth emulator requires an explicit public self-host opt-in', () {
+      expect(
+        Env.firebaseAuthEmulatorRequiredFor(
+          configuredProfile: AppEnvironmentProfile.localDev,
+          configuredApiBaseUrl: 'https://35.223.15.33.sslip.io/',
+          publicSelfHostedEnabled: false,
+        ),
+        isTrue,
+      );
+      expect(
+        Env.firebaseAuthEmulatorRequiredFor(
+          configuredProfile: AppEnvironmentProfile.localDev,
+          configuredApiBaseUrl: 'https://35.223.15.33.sslip.io/',
+          publicSelfHostedEnabled: true,
+        ),
+        isFalse,
+      );
+    });
+
+    test('public self-host does not widen production-family routing', () {
+      expect(
+        () => validateApplicationStartupRouting(
+          environment: Environment.prod,
+          configuredApiBaseUrl: 'https://omi-backend.example.com/',
         ),
         throwsStateError,
       );
