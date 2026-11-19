@@ -94,6 +94,7 @@ from routers import (
     developer,
     developer_key,
     updates,
+    app_update,
     calendar_meetings,
     google_calendar,
     calendar_onboarding,
@@ -241,6 +242,7 @@ ROUTER_MOUNTS: tuple[Mount, ...] = (
     Mount(other, roles=EVERY),  # health and readiness
     Mount(firmware),
     Mount(updates),
+    Mount(app_update),
     Mount(sync, roles=API_WORKERS),  # uploads (api) and Cloud Tasks /v2/sync-jobs/run (workers)
     Mount(sync_worker, roles=API_WORKERS),  # OIDC backfill pull-worker control plane
     Mount(batch_pipeline, roles=API_WORKERS),  # GPU worker RPC pull and recovery tasks
