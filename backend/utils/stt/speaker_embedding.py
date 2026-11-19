@@ -1,6 +1,8 @@
+import asyncio
 import io
 import logging
 import os
+import time
 import struct
 import wave
 from typing import Any, List, Optional, Tuple
@@ -11,6 +13,7 @@ from scipy.spatial.distance import cdist
 
 from utils.executors import storage_executor, run_blocking
 from utils.http_client import get_stt_client
+from utils.other.backoff import calculate_backoff_with_jitter
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +24,69 @@ SPEAKER_MATCH_THRESHOLD = 0.45
 # Minimum audio duration (seconds) for speaker embedding extraction.
 # Audio shorter than this crashes pyannote wespeaker fbank (see issue #4572).
 MIN_EMBEDDING_AUDIO_DURATION = float(os.getenv("MIN_EMBEDDING_AUDIO_DURATION", "0.5"))
+EMBEDDING_MAX_ATTEMPTS = max(1, min(5, int(os.getenv("SPEAKER_EMBEDDING_MAX_ATTEMPTS", "3"))))
+
+
+def _retryable_embedding_error(error: Exception) -> bool:
+    if isinstance(error, httpx.HTTPStatusError):
+        status = error.response.status_code
+        return status == 429 or 500 <= status <= 599
+    return isinstance(error, httpx.RequestError)
+
+
+def _retry_delay_seconds(attempt: int) -> float:
+    return calculate_backoff_with_jitter(attempt, base_delay=1000, max_delay=8000) / 1000
+
+
+def _sync_embedding_response(api_url: str, filename: str, audio_data: bytes) -> httpx.Response:
+    for attempt in range(EMBEDDING_MAX_ATTEMPTS):
+        try:
+            response = httpx.post(
+                f"{api_url}/v2/embedding",
+                files={'file': (filename, audio_data, 'audio/wav')},
+                timeout=300.0,
+            )
+            response.raise_for_status()
+            return response
+        except (httpx.HTTPStatusError, httpx.RequestError) as error:
+            if attempt + 1 >= EMBEDDING_MAX_ATTEMPTS or not _retryable_embedding_error(error):
+                raise
+            delay = _retry_delay_seconds(attempt)
+            logger.warning(
+                "speaker embedding transient failure; retrying attempt=%d/%d delay_seconds=%.2f error_type=%s",
+                attempt + 2,
+                EMBEDDING_MAX_ATTEMPTS,
+                delay,
+                type(error).__name__,
+            )
+            time.sleep(delay)
+    raise RuntimeError("unreachable speaker embedding retry state")
+
+
+async def _async_embedding_response(
+    client: httpx.AsyncClient, api_url: str, filename: str, audio_data: bytes
+) -> httpx.Response:
+    for attempt in range(EMBEDDING_MAX_ATTEMPTS):
+        try:
+            response = await client.post(
+                f"{api_url}/v2/embedding",
+                files={'file': (filename, audio_data, 'audio/wav')},
+            )
+            response.raise_for_status()
+            return response
+        except (httpx.HTTPStatusError, httpx.RequestError) as error:
+            if attempt + 1 >= EMBEDDING_MAX_ATTEMPTS or not _retryable_embedding_error(error):
+                raise
+            delay = _retry_delay_seconds(attempt)
+            logger.warning(
+                "speaker embedding transient failure; retrying attempt=%d/%d delay_seconds=%.2f error_type=%s",
+                attempt + 2,
+                EMBEDDING_MAX_ATTEMPTS,
+                delay,
+                type(error).__name__,
+            )
+            await asyncio.sleep(delay)
+    raise RuntimeError("unreachable speaker embedding retry state")
 
 
 def _get_wav_duration(audio_data: bytes) -> float:
@@ -55,10 +121,7 @@ def extract_embedding(audio_path: str) -> np.ndarray[Any, Any]:
     """
     api_url = _get_api_url()
 
-    with open(audio_path, 'rb') as f:
-        files = {'file': (os.path.basename(audio_path), f, 'audio/wav')}
-        response = httpx.post(f"{api_url}/v2/embedding", files=files, timeout=300.0)
-        response.raise_for_status()
+    response = _sync_embedding_response(api_url, os.path.basename(audio_path), _read_file(audio_path))
 
     result = response.json()
 
@@ -95,9 +158,7 @@ def extract_embedding_from_bytes(audio_data: bytes, filename: str = "audio.wav")
 
     api_url = _get_api_url()
 
-    files = {'file': (filename, audio_data, 'audio/wav')}
-    response = httpx.post(f"{api_url}/v2/embedding", files=files, timeout=300.0)
-    response.raise_for_status()
+    response = _sync_embedding_response(api_url, filename, audio_data)
 
     result = response.json()
 
@@ -126,10 +187,8 @@ async def async_extract_embedding(audio_path: str) -> np.ndarray[Any, Any]:
 
     file_data = await run_blocking(storage_executor, _read_file, audio_path)
 
-    files = {'file': (os.path.basename(audio_path), file_data, 'audio/wav')}
     try:
-        response = await client.post(f"{api_url}/v2/embedding", files=files)
-        response.raise_for_status()
+        response = await _async_embedding_response(client, api_url, os.path.basename(audio_path), file_data)
     except Exception as e:
         logger.error(f"async_extract_embedding failed for {audio_path}: {e}")
         raise
@@ -154,10 +213,8 @@ async def async_extract_embedding_from_bytes(audio_data: bytes, filename: str = 
     api_url = _get_api_url()
     client = get_stt_client()
 
-    files = {'file': (filename, audio_data, 'audio/wav')}
     try:
-        response = await client.post(f"{api_url}/v2/embedding", files=files)
-        response.raise_for_status()
+        response = await _async_embedding_response(client, api_url, filename, audio_data)
     except Exception as e:
         logger.error(f"async_extract_embedding_from_bytes failed: {e}")
         raise
