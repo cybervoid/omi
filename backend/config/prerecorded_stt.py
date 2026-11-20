@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from enum import Enum
 
 from config.stt_provider_policy import (
+    DEEPGRAM_CLOUD_PROVIDER,
     DEEPGRAM_SELF_HOSTED_PROVIDER,
     MODULATE_PROVIDER,
     PARAKEET_PROVIDER,
@@ -114,9 +115,15 @@ def provider_for_model_token(model: str) -> str | None:
         return PrerecordedSTTService.MODULATE
     if provider == PARAKEET_PROVIDER:
         return PrerecordedSTTService.PARAKEET
-    if provider == DEEPGRAM_SELF_HOSTED_PROVIDER:
+    if provider in (DEEPGRAM_CLOUD_PROVIDER, DEEPGRAM_SELF_HOSTED_PROVIDER):
         return PrerecordedSTTService.DEEPGRAM
     return None
+
+
+def _service_is_enabled(service: str) -> bool:
+    """Policy check for a prerecorded service id ('deepgram' is keyed as cloud Deepgram)."""
+    policy_key = DEEPGRAM_CLOUD_PROVIDER if service == PrerecordedSTTService.DEEPGRAM else service
+    return provider_is_enabled(policy_key, STTServingSurface.PRERECORDED)
 
 
 def providers_for_model_config(raw: str) -> tuple[str, ...]:
@@ -124,22 +131,14 @@ def providers_for_model_config(raw: str) -> tuple[str, ...]:
     providers: list[str] = []
     for model in parse_prerecorded_models(raw):
         provider = provider_for_model_token(model)
-        if (
-            provider is not None
-            and provider_is_enabled(provider, STTServingSurface.PRERECORDED)
-            and provider not in providers
-        ):
+        if provider is not None and _service_is_enabled(provider) and provider not in providers:
             providers.append(provider)
     # Retired/unknown tokens and unsupported languages fall through to the
     # non-Deepgram defaults. Include both because language capability decides
     # which one serves the request.
     for model in DEFAULT_STT_PRERECORDED_MODELS:
         provider = provider_for_model_token(model)
-        if (
-            provider is not None
-            and provider_is_enabled(provider, STTServingSurface.PRERECORDED)
-            and provider not in providers
-        ):
+        if provider is not None and _service_is_enabled(provider) and provider not in providers:
             providers.append(provider)
     return tuple(providers)
 
@@ -161,8 +160,7 @@ def required_env_for_model_config(raw: str | None, *, source_is_opaque: bool = F
         providers = tuple(
             provider
             for provider, contract in PROVIDER_ENVIRONMENT_CONTRACTS.items()
-            if contract.required_when_model_source_is_opaque
-            and provider_is_enabled(provider, STTServingSurface.PRERECORDED)
+            if contract.required_when_model_source_is_opaque and _service_is_enabled(provider)
         )
     else:
         providers = providers_for_model_config(raw or '')

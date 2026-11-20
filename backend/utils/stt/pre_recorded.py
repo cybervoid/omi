@@ -2,6 +2,7 @@ from utils.observability.sync_phases import observe_sync_call, sync_phase_timer
 import logging
 import os
 import random
+import threading
 import time
 import wave as _wave
 from abc import ABC, abstractmethod
@@ -14,7 +15,7 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union, 
 
 import httpx
 import numpy as np
-from deepgram import DeepgramClient
+from deepgram import DeepgramClient, DeepgramClientOptions
 from pydub import AudioSegment  # pydub is untyped
 
 from config.prerecorded_stt import (
@@ -28,6 +29,7 @@ from config.prerecorded_stt import (
 from config.prerecorded_language import language_class, language_guard_enabled
 from config.prerecorded_vendor import soniox_failover_enabled, vendor_fail_fast_enabled
 from config.stt_provider_policy import (
+    DEEPGRAM_CLOUD_PROVIDER,
     MODULATE_PROVIDER,
     PARAKEET_PROVIDER,
     SONIOX_PROVIDER,
@@ -35,6 +37,7 @@ from config.stt_provider_policy import (
     default_models_for_surface,
     normalized_stt_language,
     parakeet_supports_language,
+    provider_for_model_token as _policy_provider_for_model_token,
     provider_is_enabled,
     soniox_accepts_language_hint,
 )
@@ -175,7 +178,12 @@ def get_prerecorded_service(language: Optional[str] = 'en') -> Tuple[str, Option
     from config.prerecorded_language import requires_multilingual
 
     base_lang = normalized_stt_language(language.strip() if isinstance(language, str) else None)
+    deepgram_selected = _selfhost_deepgram_listed()
     if requires_multilingual(language) and base_lang in {'', 'und', 'multi', 'unknown'}:
+        # Self-host: the configured Deepgram detects the language itself; Modulate
+        # is policy-enabled upstream but has no credential on these runtimes.
+        if deepgram_selected:
+            return PrerecordedSTTService.DEEPGRAM, 'multi', 'nova-3'
         if provider_is_enabled(MODULATE_PROVIDER, STTServingSurface.PRERECORDED):
             return PrerecordedSTTService.MODULATE, 'multi', 'velma-2'
         raise TranscriptionFailure(TranscriptionOutcome.CONFIG_ERROR, retryable=False)
@@ -184,6 +192,11 @@ def get_prerecorded_service(language: Optional[str] = 'en') -> Tuple[str, Option
     def select(models: Sequence[str]) -> Optional[Tuple[str, Optional[str], str]]:
         for m in models:
             m = m.strip()
+            if _policy_provider_for_model_token(m) == DEEPGRAM_CLOUD_PROVIDER and provider_is_enabled(
+                DEEPGRAM_CLOUD_PROVIDER, STTServingSurface.PRERECORDED
+            ):
+                dg_language, dg_model = get_deepgram_model_for_language(base_lang)
+                return PrerecordedSTTService.DEEPGRAM, dg_language, dg_model
             if m == 'modulate-velma-2' and provider_is_enabled(MODULATE_PROVIDER, STTServingSurface.PRERECORDED):
                 if base_lang in {'en', 'es', 'fr', 'de', 'it', 'pt', 'nl', 'ja', 'ko', 'zh'}:
                     return PrerecordedSTTService.MODULATE, base_lang, 'velma-2'
@@ -203,6 +216,9 @@ def get_prerecorded_service(language: Optional[str] = 'en') -> Tuple[str, Option
     if selected is not None:
         return selected
 
+    if deepgram_selected:
+        return PrerecordedSTTService.DEEPGRAM, 'multi', 'nova-3'
+
     # Velma's batch API detects the language itself — we never send a code — so it can
     # serve languages the capability maps omit, and values that are not codes at all.
     if provider_is_enabled(MODULATE_PROVIDER, STTServingSurface.PRERECORDED):
@@ -212,10 +228,35 @@ def get_prerecorded_service(language: Optional[str] = 'en') -> Tuple[str, Option
     raise TranscriptionFailure(TranscriptionOutcome.CONFIG_ERROR, retryable=False)
 
 
+def _selfhost_deepgram_listed() -> bool:
+    """True when this self-host opted into cloud Deepgram and lists a Deepgram model."""
+    if not provider_is_enabled(DEEPGRAM_CLOUD_PROVIDER, STTServingSurface.PRERECORDED):
+        return False
+    return any(_policy_provider_for_model_token(m) == DEEPGRAM_CLOUD_PROVIDER for m in get_prerecorded_models())
+
+
+_selfhost_deepgram_client: Optional[DeepgramClient] = None
+_selfhost_deepgram_lock = threading.Lock()
+
+
 def _deepgram_client_for_request() -> DeepgramClient:
-    """Fail closed: Deepgram retired 2026-08-27 (no contract); do not route or add keys."""
-    logger.error('Deepgram pre-recorded STT is retired (2026-08-27, no contract); refusing the call')
-    raise PrerecordedSTTConfigurationError(PrerecordedSTTService.DEEPGRAM, 'DEEPGRAM_RETIRED')
+    """Account-owned cloud Deepgram client for an opted-in self-host; fail closed otherwise.
+
+    Upstream retired Deepgram (2026-08-27, no contract). Only a runtime that set the
+    self-host opt-in may build a client, and only from its own DEEPGRAM_API_KEY:
+    BYOK keys are deliberately not honored here.
+    """
+    global _selfhost_deepgram_client
+    if not provider_is_enabled(DEEPGRAM_CLOUD_PROVIDER, STTServingSurface.PRERECORDED):
+        logger.error('Deepgram pre-recorded STT is retired (2026-08-27, no contract); refusing the call')
+        raise PrerecordedSTTConfigurationError(PrerecordedSTTService.DEEPGRAM, 'DEEPGRAM_RETIRED')
+    api_key = (os.getenv('DEEPGRAM_API_KEY') or '').strip()
+    if not api_key:
+        raise PrerecordedSTTConfigurationError(PrerecordedSTTService.DEEPGRAM, 'DEEPGRAM_API_KEY')
+    with _selfhost_deepgram_lock:
+        if _selfhost_deepgram_client is None:
+            _selfhost_deepgram_client = DeepgramClient(api_key, DeepgramClientOptions(options={"keepalive": "true"}))
+        return _selfhost_deepgram_client
 
 
 # Languages supported by nova-3
@@ -433,6 +474,8 @@ def deepgram_prerecorded(
 
         return words
 
+    except PrerecordedSTTConfigurationError:
+        raise
     except Exception as e:
         logger.error('Deepgram prerecorded error exception_type=%s attempt=%s', type(e).__name__, attempts + 1)
         if attempts < 1 and not _held_single_attempt.get():
@@ -1410,6 +1453,10 @@ def get_prerecorded_provider(
         return ModulatePrerecordedProvider()
     if service == PrerecordedSTTService.PARAKEET:
         return ParakeetPrerecordedProvider()
+    if service == PrerecordedSTTService.DEEPGRAM and provider_is_enabled(
+        DEEPGRAM_CLOUD_PROVIDER, STTServingSurface.PRERECORDED
+    ):
+        return DeepgramPrerecordedProvider(model or 'nova-3')
     raise RuntimeError(f'Unsupported serving pre-recorded STT provider {service!r} ({model!r})')
 
 
