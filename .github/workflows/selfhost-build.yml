@@ -201,11 +201,13 @@ jobs:
           set -euo pipefail
           apk=build/app/outputs/flutter-apk/app-dev-release.apk
           bt="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)"
-          certs="$("$bt/apksigner" verify --print-certs "$apk")"
-          echo "$certs" | grep -E 'Signer #1 certificate SHA-256'
-          # Historical self-host release key; same-signature upgrades depend on it.
-          echo "$certs" | grep -q 'certificate SHA-256 digest: 89641cc6ec1b717c29cdb1d43fb4a0b5c8fdaa81b2e02777930569bb192adf7e' \
-            || { echo "APK is not signed with the self-host release key" >&2; exit 1; }
+          "$bt/apksigner" verify --verbose --print-certs "$apk" > "$RUNNER_TEMP/apksigner.txt"
+          grep -E '^Verified using|certificate SHA-256 digest' "$RUNNER_TEMP/apksigner.txt"
+          # Every signer line (v2/v3 labels differ) must be the historical self-host
+          # release key; same-signature upgrades depend on it.
+          expected='89641cc6ec1b717c29cdb1d43fb4a0b5c8fdaa81b2e02777930569bb192adf7e'
+          digests="$(grep -oE 'certificate SHA-256 digest: [0-9a-f]{64}' "$RUNNER_TEMP/apksigner.txt" | awk '{print $NF}' | sort -u)"
+          [[ "$digests" == "$expected" ]] || { echo "APK signer digests: ${digests:-none}; expected $expected" >&2; exit 1; }
           badging="$("$bt/aapt2" dump badging "$apk" | head -1)"
           echo "$badging"
           echo "$badging" | grep -q "name='com.friend.ios.dev'" || { echo "unexpected package" >&2; exit 1; }
