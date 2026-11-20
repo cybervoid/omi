@@ -9,6 +9,7 @@ traffic contract, and regression coverage are ready.
 
 from __future__ import annotations
 
+import os
 from enum import Enum
 from typing import Final, Mapping
 
@@ -133,6 +134,25 @@ PROVIDER_SERVING_SURFACES: Final[Mapping[str, frozenset[STTServingSurface]]] = {
         {STTServingSurface.STREAMING, STTServingSurface.HELD_RECOVERY, STTServingSurface.PRERECORDED}
     ),
 }
+
+# Self-host opt-in (fork-only). Upstream retired Deepgram everywhere; a self-hosted
+# deployment that runs neither the Parakeet/VAD fleet nor Modulate/Soniox accounts
+# explicitly re-admits *cloud* Deepgram on the two surfaces it has working clients
+# for. Default off, so upstream behavior is unchanged. PTT and held recovery stay
+# excluded: neither has a Deepgram client path. Self-hosted Deepgram engines stay
+# retired. Deployments must also list ``dg-nova-3`` in STT_SERVICE_MODELS /
+# STT_PRERECORDED_MODEL and provide DEEPGRAM_API_KEY.
+SELFHOST_DEEPGRAM_ENV: Final = 'OMI_SELFHOST_DEEPGRAM'
+SELFHOST_DEEPGRAM_SURFACES: Final[frozenset[STTServingSurface]] = frozenset(
+    {STTServingSurface.STREAMING, STTServingSurface.PRERECORDED}
+)
+
+
+def selfhost_deepgram_enabled(env: Mapping[str, str] | None = None) -> bool:
+    """Return whether this runtime opted into cloud Deepgram (read per call, never cached)."""
+    raw = os.getenv(SELFHOST_DEEPGRAM_ENV, '') if env is None else env.get(SELFHOST_DEEPGRAM_ENV, '')
+    return raw.strip().lower() in {'true', '1', 'on', 'yes'}
+
 
 # One independent call after a validated Modulate-empty held recovery, inside
 # the same paid intent. BATCH_PIPELINE_SECOND_MULTILINGUAL_ENABLED is its kill switch.
@@ -349,6 +369,8 @@ def provider_is_enabled(provider: str, surface: STTServingSurface) -> bool:
     # Modulate is a vendor, not a fleet GPU: it keeps live streaming after the shared fleet retires.
     if gpu_fleet_off() and provider == PARAKEET_PROVIDER:
         return False
+    if provider == DEEPGRAM_CLOUD_PROVIDER and surface in SELFHOST_DEEPGRAM_SURFACES and selfhost_deepgram_enabled():
+        return True
     return surface in PROVIDER_SERVING_SURFACES.get(provider, frozenset())
 
 

@@ -30,6 +30,7 @@ from deepgram.clients.live.v1 import LiveOptions
 from config.stt_provider_policy import (
     DEEPGRAM_PROVIDERS,
     MODULATE_PROVIDER,
+    SELFHOST_DEEPGRAM_ENV,
     SONIOX_PROVIDER,
     STTServingSurface,
     deepgram_provider_for_runtime,
@@ -40,6 +41,7 @@ from config.stt_provider_policy import (
     provider_for_model_token,
     provider_is_enabled,
     model_is_enabled,
+    selfhost_deepgram_enabled,
     supports_live_multilingual_mode,
 )
 from config.policy.listen import service_models, account_circuit_cooldown
@@ -878,7 +880,14 @@ def validate_streaming_stt_env(env: Any = None) -> None:
     # legacy dg-* slot is inert (policy refuses to admit it), so this is a loud
     # startup error rather than a crash: remove the slot.
     retired = [model for model in listed if model.startswith('dg-')]
-    if retired:
+    if retired and selfhost_deepgram_enabled(source):
+        # Self-host opt-in: Deepgram is this deployment's serving provider, so the
+        # missing key is the startup failure rather than the listed slot.
+        if not (source.get('DEEPGRAM_API_KEY') or '').strip():
+            raise RuntimeError(
+                f'{SELFHOST_DEEPGRAM_ENV} is on and STT_SERVICE_MODELS lists Deepgram, but DEEPGRAM_API_KEY is empty'
+            )
+    elif retired:
         logger.error('STT_SERVICE_MODELS lists retired Deepgram models %s; remove the slot', retired)
 
 
