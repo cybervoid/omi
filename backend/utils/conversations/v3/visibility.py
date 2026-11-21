@@ -1,6 +1,11 @@
 """Home policy: positive wearer evidence may hide background; uncertainty may not."""
 
-from utils.conversations.v3.word_floor import MIN_HOME_WORDS
+import os
+
+from utils.conversations.v3.word_floor import MIN_HOME_WORDS as UPSTREAM_MIN_HOME_WORDS
+
+SELFHOST_KEEP_SHORT_ENV = 'OMI_SELFHOST_KEEP_SHORT_CONVERSATIONS'
+MIN_HOME_WORDS = 0 if os.getenv(SELFHOST_KEEP_SHORT_ENV, '').strip().lower() == 'true' else UPSTREAM_MIN_HOME_WORDS
 
 
 def hydrate_recognition(uid, recordings, windows):
