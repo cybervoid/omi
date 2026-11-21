@@ -1,5 +1,10 @@
 """Home policy: positive wearer evidence may hide background; uncertainty may not."""
 
+import os
+
+SELFHOST_KEEP_SHORT_ENV = 'OMI_SELFHOST_KEEP_SHORT_CONVERSATIONS'
+KEEP_SHORT = os.getenv(SELFHOST_KEEP_SHORT_ENV, '').strip().lower() == 'true'
+
 
 def hydrate_recognition(uid, recordings, windows):
     from utils.speakers.evidence import get_evidence, project_labels
@@ -30,6 +35,6 @@ def project(kind, recordings, recording_ids, *, words, finished, manual_end):
         return kind, True, 'media'
     if kind == 'background':
         return kind, True, 'background_wearer_recognized'
-    if finished and not manual_end and words < 300:
+    if finished and not manual_end and words < 300 and not KEEP_SHORT:
         return kind, True, 'below_word_minimum'
     return kind, False, 'wearer_recognition_uncertain' if uncertain else 'manual_end' if manual_end else 'conversation'
