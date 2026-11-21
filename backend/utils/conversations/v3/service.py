@@ -1139,6 +1139,9 @@ def _process(uid, row, token):
         content_hash=writers.processing_hash(row),
         word_floor_outcomes=word_floor_outcomes,
     )
+    # Direct-complete short windows skip notes and their ordinary write hooks. Converge search
+    # only after settlement commits, without depending on the lifecycle-v2 rollout or notes.
+    conversations_db.sync_conversation_search_index_public(uid, row['id'])
 
 
 async def sweep():
