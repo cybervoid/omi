@@ -106,6 +106,11 @@ elif os.environ.get("SERVICE_ACCOUNT_JSON"):
 else:
     firebase_admin.initialize_app(options=_firebase_admin_options)  # type: ignore[reportUnknownMemberType]  # firebase_admin untyped
 
+# Self-host fork: single-owner access gate (no-op unless OMI_SELFHOST_ALLOWED_UIDS is set).
+from utils import selfhost_access  # noqa: E402
+
+selfhost_access.install()
+
 # Bind private cohort resolution once at the serving composition root.
 configure_rollout_runtime()
 app = FastAPI()
