@@ -39,6 +39,12 @@ else:
     firebase_admin_sdk.initialize_app(options=firebase_admin_options())
 
 
+# Self-host fork: single-owner access gate (no-op unless OMI_SELFHOST_ALLOWED_UIDS is set).
+from utils import selfhost_access  # noqa: E402
+
+selfhost_access.install()
+
+
 def _validate_static_capabilities(env: Mapping[str, str] | None = None) -> None:
     """Reject a Pusher revision that cannot complete its mandatory finalizer.
 
