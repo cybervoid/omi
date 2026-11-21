@@ -57,7 +57,7 @@ def _utc(value):
 def plan_partitions(meta, since, until, *, max_rows=PARTITION_ROWS):
     """Cut [since, until) into partitions of at most max_rows documents, at recorded silence.
 
-    A cut is placed at the last gap of at least five minutes (outline.SILENCE, the live hard window
+    A cut is placed at the last gap of at least the silence boundary (outline.SILENCE, the live hard window
     boundary), so no live stretch spans two partitions. Only a gap-free run longer than max_rows is
     cut at its largest gap; that partition is marked forced_cut and the run reports the count.
     """

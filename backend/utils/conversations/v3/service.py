@@ -268,7 +268,7 @@ async def reconcile(
                     entries = [{**entry, '_outline_failed': True} for entry in outline.fallback(group)]
             else:
                 # First speech is visible without a paid call. Outline on open
-                # or at the five-minute deadline provides the first real title.
+                # or at the configured silence deadline provides the first real title.
                 entries = [
                     {
                         'first_line': 1,

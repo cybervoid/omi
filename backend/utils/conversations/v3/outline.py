@@ -5,6 +5,7 @@ Engine carried from d5798e416a6; no episode/daypart policy or persistence.
 
 import hashlib
 import json
+import os
 from datetime import datetime, timedelta, timezone
 from difflib import SequenceMatcher
 
@@ -23,6 +24,10 @@ def playback_origin(audio_file, recording):
     return utc(audio_file.get('started_at')) or (
         datetime.fromtimestamp(min(stamps), timezone.utc) if stamps else utc(recording.get('started_at'))
     )
+
+
+SELFHOST_TWO_MINUTE_SILENCE_ENV = 'OMI_SELFHOST_TWO_MINUTE_SILENCE'
+SILENCE = timedelta(minutes=2 if os.getenv(SELFHOST_TWO_MINUTE_SILENCE_ENV, '').strip().lower() == 'true' else 5)
 
 
 SYSTEM_PROMPT = """You outline one stretch of a person's day. The person wears an audio recorder.
@@ -46,7 +51,9 @@ Return one JSON object: {"conversations": [ ... ]} where each conversation has
 - "resumes_previous": boolean, false unless the preceding conversation is explicitly continued.
 Write in English unless the speech is mostly in another language."""
 
-SILENCE = timedelta(minutes=5)
+# Keep the model's grouping boundary identical to the recorded-clock policy.
+if SILENCE == timedelta(minutes=2):
+    SYSTEM_PROMPT = SYSTEM_PROMPT.replace('Five minutes of recorded silence', 'Two minutes of recorded silence')
 
 
 # Clock slack when matching the same speech captured by two recordings.
