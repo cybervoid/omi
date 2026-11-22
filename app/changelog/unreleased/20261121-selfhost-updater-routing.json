@@ -1,0 +1,3 @@
+{
+  "change": "Self-hosted Android builds now stay on the configured self-host server and can securely offer signed app updates published by that server."
+}
