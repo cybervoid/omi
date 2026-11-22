@@ -1,4 +1,19 @@
+// posthog_flutter 5.28.0 requires the pre-4.0 native API. Its inclusive
+// [3.51.0,4.0.0] range admits Android 4.0/core 7.0, which removed those APIs.
+// Pin every subproject (including the plugin's own compile graph), before :app
+// evaluation, without upgrading the Flutter plugin or changing analytics setup.
+// https://repo.maven.apache.org/maven2/com/posthog/posthog-android/3.77.1/posthog-android-3.77.1.pom
+// https://repo.maven.apache.org/maven2/com/posthog/posthog-android/4.0.0/posthog-android-4.0.0.pom
+ext.posthogAndroidVersion = '3.77.1'
+ext.posthogCoreVersion = '6.49.1'
+
 allprojects {
+    configurations.configureEach {
+        resolutionStrategy.force(
+            "com.posthog:posthog-android:${rootProject.posthogAndroidVersion}",
+            "com.posthog:posthog:${rootProject.posthogCoreVersion}"
+        )
+    }
     repositories {
         google()
         mavenCentral()
