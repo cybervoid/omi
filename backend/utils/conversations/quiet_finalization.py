@@ -94,12 +94,22 @@ def _empty_storage_proof(transaction: Any, uid: str, cid: str, *, firestore_clie
 
 def run(job_id: str, generation: int, *, firestore_client: Any = None) -> str:
     if not enabled():
+        if not is_listen_finalization_dispatch_enabled():
+            return 'dispatch_unavailable'
         # Remove the due index so disabled checks cannot starve normal outbox
         # replay. Session setup/disconnect or the fallback scan can rearm later.
         checks_db.stop_quiet_check(job_id, generation, firestore_client=firestore_client)
         checks_db.ensure_quiet_check_progress(job_id, firestore_client=firestore_client)
         return 'disabled'
-    if not is_listen_finalization_dispatch_enabled() or not is_listen_finalization_dispatch_configured():
+    raw_status = lifecycle.complete_raw_quiet_check(job_id, generation, firestore_client=firestore_client)
+    if raw_status != 'not_raw':
+        return raw_status
+    if not is_listen_finalization_dispatch_enabled():
+        # Inline replay is permitted solely for the effects-free raw source
+        # close above. Ordinary checks remain untouched until durable dispatch
+        # owns their processing; do not retire or advance their generation.
+        return 'dispatch_unavailable'
+    if not is_listen_finalization_dispatch_configured():
         checks_db.ensure_quiet_check_progress(job_id, firestore_client=firestore_client)
         raise lifecycle.FinalizationDispatchUnavailable('quiet finalization dispatch is unavailable')
     proof_args = {}

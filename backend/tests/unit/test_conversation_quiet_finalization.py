@@ -1,6 +1,7 @@
 """Durable disconnect obligations exercise the real lifecycle admission fence."""
 
 import asyncio
+from copy import deepcopy
 
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
@@ -15,6 +16,7 @@ from starlette.websockets import WebSocketState
 from database import conversation_finalization_jobs as jobs
 from database import recording_sessions
 from database import conversation_quiet_checks as checks
+from database.batch_pipeline_privacy import PRIVACY_COLLECTION, privacy_owner_key
 from routers import conversation_finalization as worker
 from services import conversation_finalization as service
 from routers.listen.contracts import ListenRequest
@@ -90,6 +92,222 @@ def _advance(monkeypatch, seconds):
 
 def _job(store):
     return store.rows[('conversation_finalization_jobs', checks.quiet_check_id('synthetic', 'old'))]
+
+
+@pytest.fixture
+def raw_store(store, monkeypatch):
+    store.rows[ROW].update(recording=True, terminal_no_derived_effects=True, structured={})
+    store.rows[('users', 'synthetic')] = {'data_protection_level': 'enhanced'}
+    store.rows[SESSION]['lifecycle_sequence'] = 3
+    monkeypatch.setattr(quiet, 'is_listen_finalization_dispatch_enabled', lambda: False)
+    monkeypatch.setattr(quiet, 'is_listen_finalization_dispatch_configured', lambda: False)
+    monkeypatch.setattr(lifecycle.v3_triggers, 'enqueue', MagicMock())
+    monkeypatch.setattr(lifecycle, 'request_finalization', MagicMock(side_effect=AssertionError('no processing')))
+    quiet.arm('synthetic', 'old', 120, firestore_client=store)
+    quiet.enqueue_listen_finalization_job.reset_mock()
+    _advance(monkeypatch, 361)
+    return store
+
+
+@pytest.mark.parametrize('source', ['omi', 'phone'])
+def test_inline_raw_quiet_close_is_effects_free_atomic_and_idempotent(raw_store, source):
+    raw_store.rows[ROW]['source'] = source
+    before = deepcopy(raw_store.rows[ROW])
+    jid = checks.quiet_check_id('synthetic', 'old')
+    assert quiet.run(jid, 1, firestore_client=raw_store) == 'raw_completed'
+    expected = {
+        **before,
+        'status': 'completed',
+        'v3_pending': True,
+        'v3_pending_since': NOW + timedelta(seconds=361),
+    }
+    assert {key: value for key, value in raw_store.rows[ROW].items() if key != 'relevance_decision'} == expected
+    assert raw_store.rows[ROW]['relevance_decision']
+    assert raw_store.rows[SESSION]['lifecycle_phase'] == 'completed'
+    assert raw_store.rows[SESSION]['lifecycle_sequence'] == 4
+    assert _job(raw_store)['status'] == 'quiet_done'
+    # The ordering-only fixture retains DELETE_FIELD; the emulator proves its
+    # actual removal and contention/idempotency semantics.
+    assert _job(raw_store)['reconcile_after_at'] is firestore.DELETE_FIELD
+    assert len([p for p in raw_store.rows if p[0] == 'conversation_finalization_jobs']) == 1
+    assert jobs.recovery_admission_refusal('synthetic', before, NOW) == 'terminal_no_derived'
+    assert quiet.run(jid, 1, firestore_client=raw_store) == 'stale'
+    assert raw_store.rows[SESSION]['lifecycle_sequence'] == 4
+    lifecycle.request_finalization.assert_not_called()
+    quiet.enqueue_listen_finalization_job.assert_not_called()
+    lifecycle.v3_triggers.enqueue.assert_called_once_with('synthetic')
+
+
+@pytest.mark.parametrize(
+    'updates',
+    [
+        {'deleted': True},
+        {'discarded': True},
+        {'is_locked': True},
+        {'deferred': True},
+        {'sync_merged_into': 'another'},
+        {'status': 'completed'},
+        {'status': 'failed'},
+        {'processing_state': 'local_pending'},
+        {'finalization_job_id': 'existing'},
+        {'finalization_revision': 1},
+        {'record_upload_sessions': {'upload': 'producer'}},
+        {'record_upload_failed': True},
+        {'data_protection_level': 'private'},
+    ],
+)
+def test_raw_quiet_close_preserves_row_guards(raw_store, updates):
+    raw_store.rows[ROW].update(updates)
+    before = deepcopy(raw_store.rows)
+    assert quiet.run(checks.quiet_check_id('synthetic', 'old'), 1, firestore_client=raw_store) == 'raw_fenced'
+    assert raw_store.rows == before
+    lifecycle.v3_triggers.enqueue.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    'updates',
+    [
+        {'recording': False},
+        {'recording': 'true'},
+        {'terminal_no_derived_effects': False},
+        {'v3_derived': True},
+        {'imported': True},
+        {'backfilled': True},
+        {'source': 'desktop'},
+        {'record_lane_owner': 'batch_live_v1'},
+        {'server_batch_only': True},
+        {'listen_preview_batch_custody': True},
+        {'listen_producer_token': 'producer'},
+        {'listen_batch_producer': {'version': 1, 'phase': 'active', 'token': 'producer'}},
+        {'external_data': {'recording_session_id': 'recording-old', 'server_batch_only': True}},
+    ],
+)
+def test_inline_nonraw_or_batch_quiet_check_is_untouched(raw_store, updates):
+    raw_store.rows[ROW].update(updates)
+    before = deepcopy(raw_store.rows)
+    assert quiet.run(checks.quiet_check_id('synthetic', 'old'), 1, firestore_client=raw_store) == 'dispatch_unavailable'
+    assert raw_store.rows == before
+    lifecycle.request_finalization.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    'updates',
+    [
+        {'lease_expires_at': NOW + timedelta(minutes=10)},
+        {'lease_expires_at': None},
+        {'conversation_id': 'another'},
+        {'uid': 'another'},
+        {'recording_session_id': 'another'},
+        {'lifecycle_phase': 'completed'},
+        {'listen_producer_token': 'producer'},
+    ],
+)
+def test_raw_close_requires_fresh_expired_matching_producer_free_session(raw_store, updates):
+    raw_store.rows[SESSION].update(updates)
+    before_row, before_session = deepcopy(raw_store.rows[ROW]), deepcopy(raw_store.rows[SESSION])
+    jid = checks.quiet_check_id('synthetic', 'old')
+    assert quiet.run(jid, 1, firestore_client=raw_store) == 'deferred'
+    assert raw_store.rows[ROW] == before_row
+    assert raw_store.rows[SESSION] == before_session
+    assert _job(raw_store)['dispatch_generation'] == 2
+    successor = deepcopy(_job(raw_store))
+    assert quiet.run(jid, 1, firestore_client=raw_store) == 'stale'
+    assert _job(raw_store) == successor
+
+
+def test_raw_quiet_rechecks_speech_and_timeout_before_closing(raw_store):
+    raw_store.rows[ROW]['finished_at'] = NOW + timedelta(seconds=350)
+    assert quiet.run(checks.quiet_check_id('synthetic', 'old'), 1, firestore_client=raw_store) == 'deferred'
+    assert raw_store.rows[ROW]['status'] == 'in_progress'
+    raw_store.rows[ROW]['finished_at'] = NOW
+    raw_store.rows[ROW]['listen_quiet_timeout_seconds'] = 600
+    assert quiet.run(checks.quiet_check_id('synthetic', 'old'), 2, firestore_client=raw_store) == 'deferred'
+    assert raw_store.rows[ROW]['status'] == 'in_progress'
+
+
+@pytest.mark.parametrize('guard', ['deletion', 'tombstone', 'private', 'migration', 'privacy_generation', 'cutover'])
+def test_raw_close_enforces_transactional_privacy_authority(raw_store, guard):
+    if guard == 'deletion':
+        raw_store.rows[('account_deletions', 'synthetic')] = {'wipe_status': 'running'}
+    elif guard == 'tombstone':
+        raw_store.rows[('users', 'synthetic', 'deleted_conversations', 'old')] = {}
+    elif guard == 'private':
+        raw_store.rows[('users', 'synthetic')]['data_protection_level'] = 'private'
+    elif guard == 'migration':
+        raw_store.rows[('users', 'synthetic')]['migration_status'] = 'in_progress'
+    elif guard == 'privacy_generation':
+        raw_store.rows[(PRIVACY_COLLECTION, privacy_owner_key('synthetic'))] = {'blocked': True}
+    else:
+        raw_store.rows[('users', 'synthetic', 'account_cutover', 'state')] = {'uid': 'synthetic', 'state': 'migrating'}
+    before = deepcopy(raw_store.rows)
+    assert quiet.run(checks.quiet_check_id('synthetic', 'old'), 1, firestore_client=raw_store) == 'raw_fenced'
+    assert raw_store.rows == before
+
+
+def test_raw_completion_enqueue_failure_keeps_durable_builder_obligation(raw_store):
+    lifecycle.v3_triggers.enqueue.side_effect = RuntimeError('synthetic dispatch failure')
+    assert quiet.run(checks.quiet_check_id('synthetic', 'old'), 1, firestore_client=raw_store) == 'raw_completed'
+    assert raw_store.rows[ROW]['v3_pending'] is True
+    assert _job(raw_store)['status'] == 'quiet_done'
+
+
+def test_raw_completion_keeps_existing_builder_pending_age(raw_store):
+    raw_store.rows[ROW].update(v3_pending=False, v3_pending_since=NOW)
+    assert quiet.run(checks.quiet_check_id('synthetic', 'old'), 1, firestore_client=raw_store) == 'raw_completed'
+    assert raw_store.rows[ROW]['v3_pending_since'] == NOW
+
+
+def test_raw_completion_cannot_close_beneath_a_finalizer_with_lost_row_binding(raw_store):
+    orphan = jobs._job_id('synthetic', 'old', 1)
+    raw_store.rows[(jobs.FINALIZATION_JOBS_COLLECTION, orphan)] = {'status': 'leased', 'finalization_revision': 1}
+    before = deepcopy(raw_store.rows)
+    assert quiet.run(checks.quiet_check_id('synthetic', 'old'), 1, firestore_client=raw_store) == 'raw_fenced'
+    assert raw_store.rows == before
+
+
+def test_disabled_quiet_inline_replay_preserves_ordinary_obligation(store, monkeypatch):
+    quiet.arm('synthetic', 'old', 120, firestore_client=store)
+    monkeypatch.setenv('LISTEN_QUIET_FINALIZATION_ENABLED', 'false')
+    monkeypatch.setattr(quiet, 'is_listen_finalization_dispatch_enabled', lambda: False)
+    before = deepcopy(store.rows)
+    assert quiet.run(checks.quiet_check_id('synthetic', 'old'), 1, firestore_client=store) == 'dispatch_unavailable'
+    assert store.rows == before
+
+
+@pytest.mark.parametrize('raw,enabled', [(True, True), (False, True), (False, False)])
+def test_inline_reconciler_closes_only_enabled_raw_source(raw_store, monkeypatch, raw, enabled):
+    if not raw:
+        raw_store.rows[ROW].pop('recording')
+    monkeypatch.setenv('LISTEN_QUIET_FINALIZATION_ENABLED', str(enabled).lower())
+    monkeypatch.setattr(service, 'is_listen_finalization_dispatch_enabled', lambda: False)
+    monkeypatch.setattr(service, 'is_listen_finalization_tasks_configured', lambda: True)
+    monkeypatch.setattr(service, 'replay_enabled', lambda: True)
+    monkeypatch.setattr(service, '_publish_job_metrics', lambda **kw: None)
+    monkeypatch.setattr(service.jobs_db, 'recover_stranded_byok_jobs', lambda **kw: {'blocked': 0, 'errors': 0})
+    monkeypatch.setattr(service.jobs_db, 'get_finalization_replay_oldest_overdue_age_seconds', lambda **kw: 0)
+    monkeypatch.setattr(
+        service.due_marker_sweep, 'remark_missing_due_markers', lambda **kw: {'remarked': 0, 'skipped': 0, 'error': 0}
+    )
+    jid = checks.quiet_check_id('synthetic', 'old')
+    monkeypatch.setattr(
+        service.jobs_db, 'get_finalization_replay_candidates', lambda **kw: [{**_job(raw_store), 'job_id': jid}]
+    )
+    monkeypatch.setattr(
+        service.jobs_db,
+        'get_finalization_job',
+        lambda jid, **kw: raw_store.rows[(jobs.FINALIZATION_JOBS_COLLECTION, jid)],
+    )
+    defer = MagicMock(side_effect=AssertionError('must not defer ordinary check'))
+    monkeypatch.setattr(service.jobs_db, 'defer_finalization_replay', defer)
+    before = deepcopy(raw_store.rows)
+    result = service.reconcile_listen_finalization_jobs(firestore_client=raw_store)
+    assert result['retired'] == int(raw and enabled)
+    assert result['skipped'] == int(not (raw and enabled))
+    assert result['error'] == result['no_progress'] == 0
+    if not raw:
+        assert raw_store.rows == before
+    lifecycle.request_finalization.assert_not_called()
+    defer.assert_not_called()
 
 
 @pytest.mark.parametrize('source', ['omi', 'phone'])

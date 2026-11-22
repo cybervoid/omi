@@ -27,6 +27,8 @@ from database.batch_pipeline_store import FirestoreStore
 from utils.sync.stage import current_stage
 from database.helpers import set_data_protection_level
 from database import conversation_finalization_jobs as jobs_db
+from database import conversation_quiet_checks as quiet_checks_db
+from utils.conversations.v3 import triggers as v3_triggers
 from utils.conversations import merge_conversations_job
 
 from database import conversations as conversations_db
@@ -420,6 +422,43 @@ def complete_orphan_batch_capture(
     transaction.update(conversation_ref, updates)
 
 
+def complete_raw_quiet_check(job_id: str, generation: int, *, firestore_client: Any = None) -> str:
+    """Close only a disconnected nonbatch v3 source, without processing/fanout.
+
+    The transaction also persists the builder's wake obligation. Enqueue is
+    best effort after commit; a crash/failure leaves v3_pending for its sweep.
+    """
+
+    def completion_updates(row: dict[str, Any], now: datetime) -> dict[str, Any]:
+        updates = conversations_db.claim_conversation_status_in_txn(
+            row,
+            expected_status='in_progress',
+            claimed_status='completed',
+            extra_updates={'v3_pending': True, 'v3_pending_since': row.get('v3_pending_since') or now},
+        )
+        if updates is None:
+            raise LifecycleTransitionError('raw source close fenced')
+        return updates
+
+    result = quiet_checks_db.complete_raw_quiet_check(
+        job_id, generation, completion_updates=completion_updates, firestore_client=firestore_client
+    )
+    if result['status'] == 'raw_completed':
+        try:
+            v3_triggers.enqueue(result['uid'])
+        except Exception:
+            record_fallback(
+                component='other',
+                from_mode='dispatch',
+                to_mode='sweeper',
+                reason='enqueue_failed',
+                outcome='degraded',
+                log=logger,
+            )
+            logger.warning('v3 raw completion wake deferred to durable sweep')
+    return result['status']
+
+
 def complete(uid: str, conversation_id: str) -> bool:
     """Close an admitted processing or merge generation exactly once."""
     if conversations_db.claim_conversation_status(
@@ -449,8 +488,8 @@ def close_oversized_in_progress_conversation(
 ) -> str:
     """Close a live-capture row that can never be finalized because it is at Firestore's 1 MiB ceiling.
 
-    The only lifecycle edge from ``in_progress`` straight to ``completed``, and
-    only for this case: the finalization binding grows the document, so the
+    A bounded lifecycle edge from ``in_progress`` straight to ``completed``
+    for this exceptional case: the finalization binding grows the document, so the
     normal ``in_progress -> processing`` admission is rejected on every attempt
     and the row would stay invisible while each reconnect retried it. Content is
     kept as-is; the row becomes a visible conversation without a generated
