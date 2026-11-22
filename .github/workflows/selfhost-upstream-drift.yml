@@ -1,0 +1,90 @@
+name: selfhost-upstream-drift
+
+# Weekly signal only. This workflow never rebases, pushes a branch, builds,
+# deploys, or promotes an artifact.
+on:
+  schedule:
+    - cron: '17 9 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: selfhost-upstream-drift
+  cancel-in-progress: true
+
+jobs:
+  report:
+    if: github.repository == 'cybervoid/omi'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          filter: blob:none
+
+      - name: Report upstream drift
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          git remote add upstream https://github.com/BasedHardware/omi.git
+          git fetch --quiet --filter=blob:none --no-tags upstream main
+
+          stable_sha="$(git rev-parse HEAD)"
+          upstream_sha="$(git rev-parse FETCH_HEAD)"
+          merge_base="$(git merge-base HEAD FETCH_HEAD)"
+          ahead="$(git rev-list --count FETCH_HEAD..HEAD)"
+          behind="$(git rev-list --count HEAD..FETCH_HEAD)"
+          short="${upstream_sha:0:12}"
+
+          {
+            echo "## Self-host upstream drift"
+            echo
+            echo "- Stable: \`${stable_sha}\`"
+            echo "- Upstream: \`${upstream_sha}\`"
+            echo "- Merge base: \`${merge_base}\`"
+            echo "- Local commits not upstream: **${ahead}**"
+            echo "- Upstream commits pending: **${behind}**"
+            echo
+            echo "This workflow reports drift only. It does not rebase, push, build, deploy, or promote."
+          } | tee "$RUNNER_TEMP/drift-summary.md" >> "$GITHUB_STEP_SUMMARY"
+
+          mapfile -t existing < <(
+            gh issue list --repo "$REPO" --state open \
+              --search 'Self-host upstream drift in:title' --json number --jq '.[].number'
+          )
+
+          if [[ "$behind" == 0 ]]; then
+            for issue in "${existing[@]}"; do
+              gh issue close "$issue" --repo "$REPO" \
+                --comment "Stable self-host source now contains upstream \`${short}\`; closing the drift signal."
+            done
+            exit 0
+          fi
+
+          body="$RUNNER_TEMP/upstream-drift.md"
+          {
+            cat "$RUNNER_TEMP/drift-summary.md"
+            echo
+            echo "## Next bounded action"
+            echo
+            echo "Create \`sync/${short}\` from protected \`selfhost\`, merge this exact upstream SHA,"
+            echo "run affected checks plus \`make preflight\`, then push the candidate."
+            echo "The candidate must build immutable artifacts, pass the canary capture → finalized memory → retrieval journey,"
+            echo "and retain the prior digest/config before \`selfhost\` is fast-forwarded to the tested commit."
+          } > "$body"
+
+          title="Self-host upstream drift — ${behind} upstream commits pending"
+          if ((${#existing[@]})); then
+            gh issue edit "${existing[0]}" --repo "$REPO" --title "$title" --body-file "$body"
+            for issue in "${existing[@]:1}"; do
+              gh issue close "$issue" --repo "$REPO" --comment "Superseded by #${existing[0]}."
+            done
+          else
+            gh issue create --repo "$REPO" --title "$title" --body-file "$body"
+          fi

@@ -1,6 +1,6 @@
 name: selfhost-build
 
-# Self-host release builds for the fresh-upstream migration branch (fork-only).
+# Self-host release builds for disposable upstream-sync candidates (fork-only).
 #
 # Produces, without deploying anything:
 #   * backend + pusher runtime images on GHCR, tagged only with the commit SHA,
@@ -13,7 +13,8 @@ name: selfhost-build
 # Firebase/client config. No cloud deploy credentials exist in this repository.
 on:
   push:
-    branches: [migration/upstream-selfhost-v2]
+    branches:
+      - 'sync/**'
     paths:
       - 'backend/**'
       - 'app/**'
@@ -31,7 +32,7 @@ permissions:
 
 concurrency:
   group: selfhost-build-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 env:
   # Upstream's default base image is private; the public slim image is the
