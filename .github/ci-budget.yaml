@@ -276,7 +276,7 @@
       "matrix_size": 1,
       "needs": "scope",
       "owner": "CI maintainers",
-      "rationale": "2026-10-29 ghguards: run_sync now follows the full hermetic scope — the per-suite path filter missed backend/utils/sync/** and backend/database/, so #23919 shipped a sync-processing change with this gauntlet skipped and main went red unseen; expected runs match hermetic-e2e's 62 sampled backend-PR runs/day at the retained p50 (2026-10-29 measured median 7.1 min on PRs).",
+      "rationale": "2026-10-29 ghguards: run_sync now follows the full hermetic scope \u2014 the per-suite path filter missed backend/utils/sync/** and backend/database/, so #23919 shipped a sync-processing change with this gauntlet skipped and main went red unseen; expected runs match hermetic-e2e's 62 sampled backend-PR runs/day at the retained p50 (2026-10-29 measured median 7.1 min on PRs).",
       "reusable": null,
       "runner": "linux",
       "runner_counts": {
@@ -633,7 +633,7 @@
     },
     "desktop-windows-ci.yml/build-linux": {
       "budget_p50_minutes": 9,
-      "display_name": "Linux package · helper smoke",
+      "display_name": "Linux package \u00b7 helper smoke",
       "expected_nightly_runs_per_day": 1,
       "expected_runs_class": "sampled-pr-day",
       "expected_runs_per_day": 6.2,
@@ -671,7 +671,7 @@
     },
     "desktop-windows-ci.yml/checks": {
       "budget_p50_minutes": 7,
-      "display_name": "Typecheck · Lint · Test",
+      "display_name": "Typecheck \u00b7 Lint \u00b7 Test",
       "expected_nightly_runs_per_day": 1,
       "expected_runs_class": "sampled-pr-day",
       "expected_runs_per_day": 6.2,
@@ -3401,6 +3401,73 @@
       },
       "runs_on": "ubuntu-latest"
     },
+    "selfhost-build.yml/android": {
+      "budget_p50_minutes": 45,
+      "display_name": "Release-signed dev APK",
+      "expected_runs_class": "non-pr",
+      "expected_runs_per_day": 0,
+      "if": null,
+      "matrix": {},
+      "matrix_size": 1,
+      "needs": [],
+      "owner": "Self-host maintainers",
+      "rationale": "Fork-only candidate build, never a PR or scheduled job. Provisional 45-minute p50 covers the signed arm64 APK build within its 60-minute ceiling; replace with terminal samples after the first three sync candidates.",
+      "reusable": null,
+      "runner": "linux",
+      "runner_counts": {
+        "linux": 1
+      },
+      "runs_on": "ubuntu-latest"
+    },
+    "selfhost-build.yml/images": {
+      "budget_p50_minutes": 30,
+      "display_name": "Image (${{ matrix.name }})",
+      "expected_runs_class": "non-pr",
+      "expected_runs_per_day": 0,
+      "if": null,
+      "matrix": {
+        "include": [
+          {
+            "dockerfile": "backend/Dockerfile",
+            "name": "backend",
+            "repository": "ghcr.io/cybervoid/omi-backend"
+          },
+          {
+            "dockerfile": "backend/pusher/Dockerfile",
+            "name": "pusher",
+            "repository": "ghcr.io/cybervoid/omi-pusher"
+          }
+        ]
+      },
+      "matrix_size": 2,
+      "needs": [],
+      "owner": "Self-host maintainers",
+      "rationale": "Fork-only candidate build, never a PR or scheduled job. Provisional 30-minute p50 per image covers build, runtime smoke, and immutable GHCR push within the 45-minute ceiling; replace with terminal samples after the first three sync candidates.",
+      "reusable": null,
+      "runner": "linux",
+      "runner_counts": {
+        "linux": 2
+      },
+      "runs_on": "ubuntu-latest"
+    },
+    "selfhost-upstream-drift.yml/report": {
+      "budget_p50_minutes": 2,
+      "display_name": "report",
+      "expected_runs_class": "non-pr",
+      "expected_runs_per_day": 0,
+      "if": "github.repository == 'cybervoid/omi'",
+      "matrix": {},
+      "matrix_size": 1,
+      "needs": [],
+      "owner": "Self-host maintainers",
+      "rationale": "One weekly detection-only fork run fetches upstream refs and updates one tracking issue; it performs no build, deploy, or source mutation. Provisional 2-minute p50 pending terminal samples.",
+      "reusable": null,
+      "runner": "linux",
+      "runner_counts": {
+        "linux": 1
+      },
+      "runs_on": "ubuntu-latest"
+    },
     "sync-docs.yml/sync-docs": {
       "budget_p50_minutes": 5,
       "display_name": "sync-docs",
@@ -5114,7 +5181,7 @@
     "gcp_backend_pusher_auto_deploy.yml": {
       "name": "Auto Deploy Backend Pusher to GKE (Development)",
       "owner": "CI maintainers",
-      "rationale": "Initial workflow inventory. 2026-10-21 plan B B2: backend/omi_logging.py added to the pusher source-closure paths. 2026-10-22 plan B B3: backend/Dockerfile.roles added — a qualification may name the backend-pusher role image, so its image definition joins the bake trigger closure",
+      "rationale": "Initial workflow inventory. 2026-10-21 plan B B2: backend/omi_logging.py added to the pusher source-closure paths. 2026-10-22 plan B B3: backend/Dockerfile.roles added \u2014 a qualification may name the backend-pusher role image, so its image definition joins the bake trigger closure",
       "triggers": {
         "push": {
           "branches": [
@@ -6632,6 +6699,45 @@
             }
           }
         }
+      }
+    },
+    "selfhost-build.yml": {
+      "name": "selfhost-build",
+      "owner": "Self-host maintainers",
+      "rationale": "Runs only for disposable sync candidates or manual dispatch and produces immutable canary inputs without deployment; it adds no PR or scheduled runner spend.",
+      "triggers": {
+        "push": {
+          "branches": [
+            "sync/**"
+          ],
+          "paths": [
+            "backend/**",
+            "app/**",
+            ".github/workflows/selfhost-build.yml"
+          ]
+        },
+        "workflow_dispatch": {
+          "inputs": {
+            "api_base_url": {
+              "default": "",
+              "description": "HTTPS self-host API base URL compiled into the app",
+              "required": "false"
+            }
+          }
+        }
+      }
+    },
+    "selfhost-upstream-drift.yml": {
+      "name": "selfhost-upstream-drift",
+      "owner": "Self-host maintainers",
+      "rationale": "One weekly detection-only run reports upstream drift; it does not rebase, push, build, deploy, or promote code.",
+      "triggers": {
+        "schedule": [
+          {
+            "cron": "17 9 * * 1"
+          }
+        ],
+        "workflow_dispatch": ""
       }
     },
     "sync-docs.yml": {
