@@ -45,5 +45,5 @@ loopback Firestore emulator and rejects non-demo projects):
   tests/unit/test_check_conversation_lifecycle_writes.py)
 python3 backend/scripts/check_conversation_lifecycle_writes.py
 FIRESTORE_EMULATOR_HOST=127.0.0.1:8787 GOOGLE_CLOUD_PROJECT=demo-v3-raw \
-  backend/.venv/bin/python backend/tests/integration/v3_raw_quiet_emulator.py
+  backend/.venv/bin/python backend/tests/integration/raw_quiet_recovery_emulator.py
 ```
