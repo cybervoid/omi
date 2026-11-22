@@ -484,10 +484,10 @@ def test_replay_kill_switch_also_stops_cloud_tasks_host(store, monkeypatch, inli
 
 
 @pytest.mark.parametrize('kind', ['listen_quiet_check', 'conversation_merge'])
-def test_inline_replay_does_not_run_or_defer_other_job_kinds(store, monkeypatch, inline_replay, kind):
+def test_inline_replay_preserves_nonraw_quiet_and_merge_ownership(store, monkeypatch, inline_replay, kind):
     store.rows[JOB_PATH].update(kind=kind, reconcile_after_at=NOW - timedelta(minutes=1))
     before = deepcopy(store.rows)
-    quiet = Mock()
+    quiet = Mock(return_value='dispatch_unavailable')
     merge = Mock()
     claim = Mock()
     defer = Mock()
@@ -498,7 +498,11 @@ def test_inline_replay_does_not_run_or_defer_other_job_kinds(store, monkeypatch,
 
     assert service.reconcile_listen_finalization_jobs(firestore_client=store)['skipped'] == 1
     assert store.rows == before
-    for effect in (quiet, merge, claim, defer, inline_replay):
+    if kind == 'listen_quiet_check':
+        quiet.assert_called_once_with(JOB_PATH[-1], 52, firestore_client=store)
+    else:
+        quiet.assert_not_called()
+    for effect in (merge, claim, defer, inline_replay):
         effect.assert_not_called()
 
 

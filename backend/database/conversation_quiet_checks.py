@@ -1,14 +1,15 @@
 """Durable quiet checks, separate from processing ownership in the finalization outbox.
 
-A check never changes conversation status or finalization revision. The normal
-SERVER_RECOVERY transaction is the only processing admission boundary.
+A check never admits processing or changes finalization revision. The normal
+SERVER_RECOVERY transaction is the only processing admission boundary. The
+separate raw-source close below changes status without admitting derived work.
 """
 
 from __future__ import annotations
 
 import math
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Callable
 
 from google.cloud import firestore
 from prometheus_client import Counter
@@ -19,6 +20,10 @@ from database.quiet_check_retirement import (
     stop_quiet_check_for_conversation,
 )
 from database._client import get_firestore_client
+from database import account_cutover as cutover_db
+from database.batch_pipeline_privacy import assert_batch_write_allowed, BatchPrivacyBlocked
+from database.read_boundary import MalformedDocError
+from utils.account_cutover.fence import background_job_should_skip_account
 from database import conversation_finalization_jobs as jobs_db
 from models.conversation_continuity import continuation_timeout
 from config.refactor_modes import serving_for, quiet_empty_exit_enabled
@@ -156,6 +161,148 @@ def quiet_empty_candidate(row: dict[str, Any]) -> bool:
         and row.get('server_batch_audio_start') is None
         and row.get('server_batch_audio_end') is None
     )
+
+
+def complete_raw_quiet_check(
+    job_id: str,
+    generation: int,
+    *,
+    completion_updates: Callable[[dict[str, Any], datetime], dict[str, Any]],
+    firestore_client: Any = None,
+) -> dict[str, Any]:
+    """Effects-free v3 raw close, invoked only through the lifecycle owner.
+
+    The source, bound session and quiet generation share one transaction: a
+    concurrent reconnect, producer, privacy/deletion change or ordinary
+    finalizer invalidates the close. The terminal-no-derived marker is NOT
+    generic recovery permission and is never cleared. Nonraw checks are read
+    only, so inline replay cannot take ownership of ordinary quiet finalization.
+    """
+    client = _client(firestore_client)
+    job_ref = client.collection(jobs_db.FINALIZATION_JOBS_COLLECTION).document(job_id)
+
+    @firestore.transactional
+    def close(transaction: Any) -> dict[str, Any]:
+        job = job_ref.get(transaction=transaction).to_dict() or {}
+        if (
+            job.get('kind') != QUIET_CHECK_KIND
+            or job.get('status') != QUIET_CHECK_STATUS
+            or isinstance(job.get('dispatch_generation'), bool)
+            or job.get('dispatch_generation') != generation
+        ):
+            return {'status': 'stale'}
+        uid, cid = job.get('uid'), job.get('conversation_id')
+        if not all(isinstance(value, str) and value and '/' not in value for value in (uid, cid)):
+            return {'status': 'not_raw'}
+        user_ref = client.collection('users').document(uid)
+        row_ref = user_ref.collection('conversations').document(cid)
+        row = row_ref.get(transaction=transaction).to_dict() or {}
+        # These are the durable mark_new/_mark_resolved identity fields, not
+        # the terminal marker alone. A batch lane (including partial ownership
+        # metadata) must never enter this nonbatch completion contract.
+        external = row.get('external_data') or {}
+        if (
+            row.get('recording') is not True
+            or row.get('terminal_no_derived_effects') is not True
+            or row.get('v3_derived')
+            or row.get('imported')
+            or row.get('backfilled')
+            or row.get('source') not in QUIET_SOURCES
+            or not isinstance(external, dict)
+            or row.get('record_lane_owner')
+            or row.get(listen_reconnect.FIELD)
+            or row.get('listen_producer_token')
+            or any(row.get(key) or external.get(key) for key in ('server_batch_only', 'listen_preview_batch_custody'))
+        ):
+            return {'status': 'not_raw'}
+        now = _now()
+
+        def defer() -> dict[str, Any]:
+            due = now + timedelta(seconds=60)
+            transaction.update(
+                job_ref,
+                {'dispatch_generation': generation + 1, 'due_at': due, 'reconcile_after_at': due, 'updated_at': now},
+            )
+            return {'status': 'deferred'}
+
+        if (
+            row.get('status') != 'in_progress'
+            or any(
+                row.get(key)
+                for key in (
+                    'deleted',
+                    'discarded',
+                    'is_locked',
+                    'deferred',
+                    'sync_merged_into',
+                    'finalization_job_id',
+                    'finalization_revision',
+                    'record_upload_sessions',
+                    'record_upload_failed',
+                )
+            )
+            or row.get('processing_state') == 'local_pending'
+            or row.get('data_protection_level', 'enhanced') not in {'standard', 'enhanced'}
+        ):
+            return {'status': 'raw_fenced'}
+        sid = external.get('recording_session_id')
+        if not isinstance(sid, str) or not sid or '/' in sid:
+            return defer()
+        session_ref = user_ref.collection('recording_sessions').document(sid)
+        session = session_ref.get(transaction=transaction).to_dict() or {}
+        expiry = session.get('lease_expires_at')
+        if isinstance(expiry, datetime) and expiry.tzinfo is None:
+            expiry = expiry.replace(tzinfo=timezone.utc)
+        deadline = quiet_deadline(
+            row, row.get('listen_quiet_timeout_seconds', job.get('quiet_timeout_seconds')), uid=uid
+        )
+        if (
+            session.get('uid') != uid
+            or session.get('recording_session_id') != sid
+            or session.get('conversation_id') != cid
+            or session.get('lifecycle_phase') != 'in_progress'
+            or session.get('listen_producer_token')
+            or not isinstance(expiry, datetime)
+            or expiry > now
+            or deadline is None
+            or deadline > now
+        ):
+            return defer()
+        # Even an outbox whose row bind was lost retains ownership of the
+        # first finalization revision. Never close underneath that finalizer.
+        if jobs_db.has_finalization_job_for_revision(
+            transaction, client.collection(jobs_db.FINALIZATION_JOBS_COLLECTION), uid, cid, 1
+        ):
+            return {'status': 'raw_fenced'}
+        # No cached preflight authorizes the terminal write: privacy authority,
+        # the account deletion marker and cutover all join the conflict set.
+        try:
+            assert_batch_write_allowed(
+                client, transaction, uid, conversation_ids=(cid,), snapshots={}, allow_token_mint=False
+            )
+            cutover = cutover_db.get_account_cutover_record(uid, firestore_client=client, transaction=transaction)
+        except (BatchPrivacyBlocked, MalformedDocError):
+            return {'status': 'raw_fenced'}
+        if background_job_should_skip_account(cutover):
+            return {'status': 'raw_fenced'}
+        # As with finalization_admission in the outbox, the lifecycle owner
+        # decides the transition against this transaction's current snapshot.
+        transaction.update(row_ref, completion_updates(row, now))
+        transaction.update(
+            session_ref,
+            {
+                'lifecycle_phase': 'completed',
+                'lifecycle_sequence': int(session.get('lifecycle_sequence') or 0) + 1,
+                'updated_at': now,
+            },
+        )
+        transaction.update(
+            job_ref,
+            {'status': 'quiet_done', 'reconcile_after_at': firestore.DELETE_FIELD, 'updated_at': now},
+        )
+        return {'status': 'raw_completed', 'uid': uid, 'conversation_id': cid}
+
+    return close(client.transaction())
 
 
 def evaluate_quiet_check(

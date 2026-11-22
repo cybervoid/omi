@@ -178,6 +178,8 @@ def _reconcile_quiet_candidate(candidate: dict[str, Any], *, firestore_client: A
         status = quiet_finalization.run(
             job_id, int(candidate['dispatch_generation']), firestore_client=firestore_client
         )
+        if status in {'dispatch_unavailable', 'raw_fenced'}:
+            return 'skipped'
         if status == 'stale':
             outcome = 'stale'
         else:
@@ -269,11 +271,12 @@ def reconcile_listen_finalization_jobs(
         _publish_job_metrics(firestore_client=firestore_client)
         return result | {'error': 1}
 
-    # Inline listen owns only ordinary finalization replay. Quiet/merge jobs
-    # retain their existing cloud_tasks admission and scheduling ownership.
+    # Quiet replay may close only expired nonbatch v3 raw sources while inline.
+    # The runner leaves all other quiet checks untouched; merges retain their
+    # cloud_tasks admission and scheduling ownership.
     replay_candidates = candidates
     if not dispatch_enabled:
-        replay_candidates = [c for c in candidates if c.get('kind') not in ('listen_quiet_check', 'conversation_merge')]
+        replay_candidates = [c for c in candidates if c.get('kind') != 'conversation_merge']
         result['skipped'] += len(candidates) - len(replay_candidates)
     quiet_candidates = [
         candidate
