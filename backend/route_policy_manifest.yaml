@@ -6,6 +6,26 @@
 schema_version: 1
 service: backend-main
 routes:
+  # Self-host Android feed: auth and BYOK are enforced by the shared
+  # get_current_user_uid dependency; no route-specific rate limit or timeout.
+  - route_type: http
+    method: GET
+    path: /v2/app/android/latest
+    policy: &selfhost_android_update_policy
+      review_status: reviewed
+      auth: {mechanisms: [firebase_id_token, admin_key_uid_prefix], placement: dependency, scopes: []}
+      byok: validated_when_headers_present
+      rate_limit: {policy_name: none, key_subject: none, enforcement: none, placement: none}
+      timeout_class: default_method
+      surface: first_party_app
+      visibility: first_party
+      data_domain: apps
+      deprecation: {state: active}
+      owner: backend
+  - route_type: http
+    method: GET
+    path: /v2/app/android/download
+    policy: *selfhost_android_update_policy
   - {route_type: http, method: POST, path: "/v2/sync-local-files/{job_id}/release-hold", policy: {review_status: reviewed, auth: {mechanisms: [firebase_id_token, admin_key_uid_prefix], placement: dependency, scopes: []}, byok: not_applicable, rate_limit: {policy_name: sync_job_poll, key_subject: uid, enforcement: fail_open, placement: handler}, timeout_class: default_method, surface: first_party_app, visibility: first_party, data_domain: conversations, deprecation: {state: active}, owner: backend}}
   - route_type: http
     method: GET
