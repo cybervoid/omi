@@ -6,6 +6,7 @@ import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 
+import 'package:omi/backend/http/api_result.dart';
 import 'package:omi/env/environment_profile.dart';
 import 'package:omi/services/selfhost_update/app_update_nudge.dart';
 import 'package:omi/services/selfhost_update/app_update_service.dart';
@@ -68,7 +69,20 @@ void main() {
           InstalledBuild(packageName: _package, versionName: '1.0.543', versionCode: installedVersionCode),
       fetchMetadata: (url) async {
         requested.add(url);
-        return metadata;
+        if (metadata == null) return const ApiFailure(ApiProblem(ApiProblemKind.transport));
+        if (metadata.statusCode == 404) {
+          return const ApiFailure(ApiProblem(ApiProblemKind.notFound, statusCode: 404));
+        }
+        if (metadata.statusCode != 200) {
+          return ApiFailure(ApiProblem(ApiProblemKind.server, statusCode: metadata.statusCode));
+        }
+        try {
+          final info = AppUpdateInfo.tryParse(jsonDecode(metadata.body));
+          if (info == null) return const ApiFailure(ApiProblem(ApiProblemKind.decode));
+          return ApiSuccess(info);
+        } on FormatException {
+          return const ApiFailure(ApiProblem(ApiProblemKind.decode));
+        }
       },
       openDownload: (url, _) async {
         requested.add(url);
@@ -150,7 +164,7 @@ void main() {
     test('network, HTTP, invalid metadata, and foreign packages fail closed', () async {
       expect((await service().checkForUpdate()).failure, 'network');
       expect((await service(metadata: http.Response('x', 500)).checkForUpdate()).failure, 'http_500');
-      expect((await service(metadata: http.Response('not json', 200)).checkForUpdate()).failure, 'exception');
+      expect((await service(metadata: http.Response('not json', 200)).checkForUpdate()).failure, 'invalid_metadata');
       expect(
         (await service(metadata: http.Response(jsonEncode(_metadata(sha: 'bad')), 200)).checkForUpdate()).failure,
         'invalid_metadata',

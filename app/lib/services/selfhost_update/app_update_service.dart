@@ -10,6 +10,7 @@ import 'package:http/http.dart' as http;
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
 
+import 'package:omi/backend/http/api_result.dart';
 import 'package:omi/backend/http/shared.dart';
 import 'package:omi/env/env.dart';
 import 'package:omi/env/environment_profile.dart';
@@ -173,7 +174,7 @@ class InstalledBuild {
   final int versionCode;
 }
 
-typedef MetadataFetcher = Future<http.Response?> Function(String url);
+typedef MetadataFetcher = Future<ApiResult<AppUpdateInfo>> Function(String url);
 typedef DownloadOpener = Future<http.StreamedResponse> Function(String url, Future<void>? abortTrigger);
 typedef ApkInstaller = Future<AppUpdateInstallResult> Function(String path, int versionCode);
 
@@ -243,21 +244,20 @@ class AppUpdateService {
         );
 
     try {
-      final response = await _fetchMetadata(_url(latestPath));
-      if (response == null) return result(AppUpdateCheckStatus.failed, failure: 'network');
-      if (response.statusCode == 404) return result(AppUpdateCheckStatus.notPublished);
-      if (response.statusCode != 200) {
-        return result(AppUpdateCheckStatus.failed, failure: 'http_${response.statusCode}');
-      }
-      final info = AppUpdateInfo.tryParse(jsonDecode(response.body));
-      if (info == null) return result(AppUpdateCheckStatus.failed, failure: 'invalid_metadata');
-      if (info.package != current.packageName) {
-        return result(AppUpdateCheckStatus.failed, failure: 'package_mismatch');
-      }
-      return result(
-        info.versionCode > current.versionCode ? AppUpdateCheckStatus.updateAvailable : AppUpdateCheckStatus.upToDate,
-        info: info,
-      );
+      return switch (await _fetchMetadata(_url(latestPath))) {
+        ApiFailure(problem: final problem) when problem.kind == ApiProblemKind.notFound =>
+          result(AppUpdateCheckStatus.notPublished),
+        ApiFailure(problem: final problem) =>
+          result(AppUpdateCheckStatus.failed, failure: _metadataFailure(problem)),
+        ApiSuccess(data: final info) when info.package != current.packageName =>
+          result(AppUpdateCheckStatus.failed, failure: 'package_mismatch'),
+        ApiSuccess(data: final info) => result(
+            info.versionCode > current.versionCode
+                ? AppUpdateCheckStatus.updateAvailable
+                : AppUpdateCheckStatus.upToDate,
+            info: info,
+          ),
+      };
     } catch (e) {
       Logger.debug('Self-host update check failed: $e');
       return result(AppUpdateCheckStatus.failed, failure: 'exception');
@@ -356,14 +356,26 @@ class AppUpdateService {
     } catch (_) {}
   }
 
-  static Future<http.Response?> _defaultFetchMetadata(String url) => makeApiCall(
-        url: url,
-        headers: const {},
-        body: '',
-        method: 'GET',
-        timeout: const Duration(seconds: 20),
-        retries: 1,
+  static Future<ApiResult<AppUpdateInfo>> _defaultFetchMetadata(String url) => executeApi(
+        request: ApiRequest(url: url, method: 'GET'),
+        decode: (body) {
+          final info = AppUpdateInfo.tryParse(jsonDecode(body));
+          if (info == null) throw const FormatException('invalid app update metadata');
+          return info;
+        },
       );
+
+  static String _metadataFailure(ApiProblem problem) {
+    if (problem.kind == ApiProblemKind.transport) return 'network';
+    if (problem.kind == ApiProblemKind.decode) return 'invalid_metadata';
+    final statusCode = problem.statusCode;
+    if (statusCode != null) return 'http_$statusCode';
+    return switch (problem.kind) {
+      ApiProblemKind.authTerminal => 'auth_terminal',
+      ApiProblemKind.authTransient => 'auth_transient',
+      _ => 'api_${problem.kind.name}',
+    };
+  }
 
   static Future<http.StreamedResponse> _defaultOpenDownload(String url, Future<void>? abortTrigger) =>
       makeRawApiCall(url: url, method: 'GET', abortTrigger: abortTrigger, timeout: const Duration(minutes: 10));
